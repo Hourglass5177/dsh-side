@@ -9,6 +9,29 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0]
+
+### Added
+
+- Live streaming: `assistant/attempt` records feed a transient node, so text and
+  reasoning appear while the side agent runs and are replaced by the committed message.
+- A Markdown subset for assistant text: fenced code, inline code, lists, headings,
+  rules, bold/italic and link labels.
+- Images: both user and assistant messages resolve attachments through the
+  Conversation service and render them.
+- Tool rows show the name, a clipped argument summary and a collapsible body with
+  pretty-printed arguments plus a truncated result, marked when it failed.
+
+### Fixed
+
+- The transcript no longer owns a scroll container: the shell's scroll body is the only
+  scroller, content is padded for the sticky composer, and it sticks to the bottom only
+  while the user is already there.
+
+### Changed
+
+- The transcript seat is renamed to `side.chat.transcript`.
+
 ## [1.3.1]
 
 ### Fixed

@@ -35,7 +35,7 @@ window.__ModuleLoader__.load({
     const PAGE_KIND = 'sidechat-new'
 
     /** Child slot hosting the product's conversation inside this tab body. */
-    const CHAT_SLOT = 'side.chat.conversation'
+    const TRANSCRIPT_SEAT = 'side.chat.transcript'
 
     /** Parent-side reference source recorded by the resource provider. */
     const REFERENCE_SOURCE = 'sideChat'
@@ -281,6 +281,34 @@ window.__ModuleLoader__.load({
           return text.trim()
         }
 
+        /** @param {unknown} content - message content blocks. @returns {object[]} images. */
+        function blockImages(content) {
+          if (!Array.isArray(content)) return []
+          return content.filter(block => block?.type === 'image')
+        }
+
+        /**
+         * Fold one `assistant/attempt` stream into text and reasoning.
+         * Records are `text-chunks` / `reasoning-chunks` / `tool-call-chunks` / raw `chunk`.
+         * @param {unknown} stream - attempt stream records.
+         * @returns {{ text: string, reasoning: string }} accumulated text.
+         */
+        function accumulateStream(stream) {
+          let text = ''
+          let reasoning = ''
+          if (!Array.isArray(stream)) return { text, reasoning }
+          for (const record of stream) {
+            if (record?.type === 'text-chunks') text += (record.texts ?? []).join('')
+            else if (record?.type === 'reasoning-chunks') reasoning += (record.texts ?? []).join('')
+            else if (record?.type === 'chunk') {
+              const chunk = record.chunk ?? {}
+              if (chunk.type === 'text-delta') text += String(chunk.text ?? '')
+              else if (chunk.type === 'reasoning-delta') reasoning += String(chunk.text ?? '')
+            }
+          }
+          return { text, reasoning }
+        }
+
         /**
          * @param {object} source - ObservableSnapshot source.
          * @returns {unknown} its current snapshot.
@@ -295,6 +323,255 @@ window.__ModuleLoader__.load({
             [source],
           )
           return React.useSyncExternalStore(subscribe, getSnapshot)
+        }
+
+        // ---------------------------------------------------------------- markdown
+
+        /**
+         * Split assistant text into the block shapes this transcript renders.
+         * @param {unknown} input - markdown-ish text.
+         * @returns {object[]} blocks.
+         */
+        function parseBlocks(input) {
+          const lines = String(input ?? '').split('\n')
+          const blocks = []
+          let paragraph = []
+          let code = null
+          let list = null
+          const flushParagraph = () => {
+            if (paragraph.length > 0) {
+              blocks.push({ kind: 'paragraph', text: paragraph.join('\n') })
+              paragraph = []
+            }
+          }
+          const flushList = () => {
+            if (list !== null) {
+              blocks.push({ kind: 'list', ordered: list.ordered, items: list.items })
+              list = null
+            }
+          }
+          for (const line of lines) {
+            if (code !== null) {
+              if (line.trim().startsWith('```')) {
+                blocks.push({ kind: 'code', language: code.language, text: code.lines.join('\n') })
+                code = null
+              } else code.lines.push(line)
+              continue
+            }
+            const fence = /^```([\w+-]*)\s*$/.exec(line.trim())
+            if (fence !== null) {
+              flushParagraph()
+              flushList()
+              code = { language: fence[1] ?? '', lines: [] }
+              continue
+            }
+            if (/^\s*$/.test(line)) {
+              flushParagraph()
+              flushList()
+              continue
+            }
+            const heading = /^(#{1,4})\s+(.*)$/.exec(line)
+            if (heading !== null) {
+              flushParagraph()
+              flushList()
+              blocks.push({ kind: 'heading', level: heading[1].length, text: heading[2] })
+              continue
+            }
+            if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) {
+              flushParagraph()
+              flushList()
+              blocks.push({ kind: 'rule' })
+              continue
+            }
+            const bullet = /^\s*[-*+]\s+(.*)$/.exec(line)
+            if (bullet !== null) {
+              flushParagraph()
+              if (list === null || list.ordered) {
+                flushList()
+                list = { ordered: false, items: [] }
+              }
+              list.items.push(bullet[1])
+              continue
+            }
+            const ordered = /^\s*\d+[.)]\s+(.*)$/.exec(line)
+            if (ordered !== null) {
+              flushParagraph()
+              if (list === null || !list.ordered) {
+                flushList()
+                list = { ordered: true, items: [] }
+              }
+              list.items.push(ordered[1])
+              continue
+            }
+            flushList()
+            paragraph.push(line)
+          }
+          flushParagraph()
+          flushList()
+          if (code !== null) blocks.push({ kind: 'code', language: code.language, text: code.lines.join('\n') })
+          return blocks
+        }
+
+        /**
+         * Inline markdown: code spans, bold, italic and links (rendered as text).
+         * @param {string} text - inline text.
+         * @returns {unknown[]} React children.
+         */
+        function inlineNodes(text) {
+          const nodes = []
+          const pattern = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(\[[^\]]+\]\([^)]+\))/gu
+          let last = 0
+          let match
+          while ((match = pattern.exec(text)) !== null) {
+            if (match.index > last) nodes.push(text.slice(last, match.index))
+            const token = match[0]
+            if (token.startsWith('`')) {
+              nodes.push(h('code', {
+                key: `c${match.index}`,
+                style: {
+                  padding: '1px 4px', borderRadius: '4px',
+                  background: 'var(--dsw-specific-input-major, rgba(127,127,127,0.16))',
+                  fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: '0.92em',
+                },
+              }, token.slice(1, -1)))
+            } else if (token.startsWith('**')) {
+              nodes.push(h('strong', { key: `b${match.index}` }, token.slice(2, -2)))
+            } else if (token.startsWith('*')) {
+              nodes.push(h('em', { key: `i${match.index}` }, token.slice(1, -1)))
+            } else {
+              const link = /\[([^\]]+)\]\(([^)]+)\)/u.exec(token)
+              nodes.push(h('span', { key: `l${match.index}`, title: link?.[2] ?? '' }, link?.[1] ?? token))
+            }
+            last = match.index + token.length
+          }
+          if (last < text.length) nodes.push(text.slice(last))
+          return nodes
+        }
+
+        /** Render one markdown text as React children. */
+        function Markdown({ text }) {
+          const blocks = parseBlocks(text)
+          return h(React.Fragment, null, ...blocks.map((block, index) => {
+            if (block.kind === 'code') {
+              return h('pre', {
+                key: `k${index}`,
+                style: {
+                  margin: '8px 0', padding: '10px 12px', borderRadius: 'var(--dsw-radius-md, 8px)',
+                  background: 'var(--dsw-specific-input-major, rgba(127,127,127,0.14))',
+                  overflowX: 'auto', whiteSpace: 'pre',
+                  fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: '0.92em',
+                },
+              }, h('code', null, block.text))
+            }
+            if (block.kind === 'heading') {
+              const size = block.level === 1 ? '1.25em' : block.level === 2 ? '1.15em' : '1.05em'
+              return h('div', {
+                key: `k${index}`,
+                style: { margin: '10px 0 4px', fontWeight: 600, fontSize: size },
+              }, ...inlineNodes(block.text))
+            }
+            if (block.kind === 'rule') {
+              return h('hr', {
+                key: `k${index}`,
+                style: { margin: '12px 0', border: 'none', borderTop: '1px solid var(--dsw-alias-line, rgba(127,127,127,0.3))' },
+              })
+            }
+            if (block.kind === 'list') {
+              return h(block.ordered ? 'ol' : 'ul', {
+                key: `k${index}`, style: { margin: '6px 0', paddingLeft: '1.4em' },
+              }, ...block.items.map((item, itemIndex) => h('li', { key: `i${itemIndex}`, style: { margin: '2px 0' } }, ...inlineNodes(item))))
+            }
+            return h('div', { key: `k${index}`, style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } },
+              ...inlineNodes(block.text))
+          }))
+        }
+
+        // ------------------------------------------------------------- components
+
+        /** One collapsible block used for reasoning and tool output. */
+        function Disclosure({ summary, children, tone }) {
+          const [open, setOpen] = React.useState(false)
+          return h('div', { style: { margin: '6px 0' } },
+            h('button', {
+              type: 'button',
+              onClick: () => setOpen(value => !value),
+              style: {
+                display: 'flex', alignItems: 'center', gap: '6px', width: '100%', textAlign: 'left',
+                padding: '4px 8px', border: 'none', borderRadius: 'var(--dsw-radius-md, 8px)',
+                background: 'transparent', color: tone === 'error' ? 'var(--dsw-alias-warning, #e0a030)' : 'inherit',
+                font: 'inherit', cursor: 'pointer', opacity: 0.8,
+              },
+            }, h('span', { style: { fontSize: '11px' } }, open ? '▾' : '▸'), summary),
+            open
+              ? h('div', {
+                style: {
+                  padding: '4px 12px 8px', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                  fontSize: 'var(--dsh-content-font-size-secondary, 13px)', opacity: 0.85,
+                },
+              }, children)
+              : null,
+          )
+        }
+
+        /** One image block, resolved through the conversation service. */
+        function ImageBlock({ sessionId, block }) {
+          const [url, setUrl] = React.useState(() => {
+            try {
+              return conversation?.peekImageUrl?.(sessionId, block) ?? undefined
+            } catch (_unavailable) {
+              return undefined
+            }
+          })
+          React.useEffect(() => {
+            if (url !== undefined) return undefined
+            let cancelled = false
+            Promise.resolve()
+              .then(() => conversation?.imageUrl?.(sessionId, block))
+              .then(value => { if (!cancelled && typeof value === 'string') setUrl(value) })
+              .catch(() => {})
+            return () => { cancelled = true }
+          }, [sessionId, block, url])
+          if (url === undefined) {
+            return h('div', { style: { fontSize: '12px', opacity: 0.55, marginTop: '6px' } }, '图片加载中…')
+          }
+          return h('img', {
+            src: url, alt: '附件',
+            style: { display: 'block', maxWidth: '100%', maxHeight: '360px', borderRadius: '8px', marginTop: '6px' },
+          })
+        }
+
+        /** One tool call with its result. */
+        function ToolRow({ data }) {
+          const failed = typeof data.result === 'string' && /^(Error|失败|error:)/u.test(data.result.trim())
+          const firstLine = String(data.args ?? '').split('\n')[0].slice(0, 80)
+          const body = `${formatJson(data.args)}${data.result === '' ? '' : `\n\n${truncate(data.result, 4000)}`}`
+          return h(Disclosure, {
+            summary: `工具调用 · ${data.name}${failed ? ' · 失败' : ''}${data.result === '' ? ' · 运行中' : ''}`,
+            tone: failed ? 'error' : undefined,
+          }, `${firstLine}${firstLine === '' ? '' : '\n\n'}${body}`)
+        }
+
+        /**
+         * @param {unknown} value - JSON text.
+         * @returns {string} pretty JSON, or the original text.
+         */
+        function formatJson(value) {
+          if (typeof value !== 'string' || value.trim() === '') return ''
+          try {
+            return JSON.stringify(JSON.parse(value), null, 2)
+          } catch (_notJson) {
+            return value
+          }
+        }
+
+        /**
+         * @param {unknown} value - text.
+         * @param {number} limit - characters to keep.
+         * @returns {string} possibly truncated text.
+         */
+        function truncate(value, limit) {
+          const text = String(value ?? '')
+          return text.length <= limit ? text : `${text.slice(0, limit)}\n…（已截断 ${text.length - limit} 字）`
         }
 
         /**
@@ -326,15 +603,16 @@ window.__ModuleLoader__.load({
               id: String(match.event.data?.id ?? match.event.seq),
               seq: match.event.seq ?? 0,
               text: blockText(match.event.data?.content, 'text'),
-              time: match.event.time ?? 0,
+              images: blockImages(match.event.data?.content),
             }),
             update: (_context, match) => ({
               id: String(match.event.data?.id ?? match.event.seq),
               seq: match.event.seq ?? 0,
               text: blockText(match.event.data?.content, 'text'),
-              time: match.event.time ?? 0,
+              images: blockImages(match.event.data?.content),
             }),
-            buildViewNode: context => (context.state === undefined || context.state.text === ''
+            buildViewNode: context => (context.state === undefined
+              || (context.state.text === '' && context.state.images.length === 0)
               ? null
               : { key: `side-user:${context.state.id}`, kind: 'side-user', id: context.state.id, target: SIDE_TARGET, data: context.state }),
           }
@@ -344,23 +622,23 @@ window.__ModuleLoader__.load({
             match: event => (event?.type === 'assistant/message'
               ? { id: String(event.seq), role: 'start' }
               : null),
-            start: (_context, match) => ({
-              id: String(match.event.seq),
-              seq: match.event.seq ?? 0,
-              text: blockText(match.event.data?.message?.content, 'text'),
-              reasoning: blockText(match.event.data?.message?.content, 'reasoning'),
-              time: match.event.time ?? 0,
-            }),
-            update: (_context, match) => ({
-              id: String(match.event.seq),
-              seq: match.event.seq ?? 0,
-              text: blockText(match.event.data?.message?.content, 'text'),
-              reasoning: blockText(match.event.data?.message?.content, 'reasoning'),
-              time: match.event.time ?? 0,
-            }),
+            start: (_context, match) => assistantState(match.event),
+            update: (_context, match) => assistantState(match.event),
             buildViewNode: context => (context.state === undefined
               ? null
               : { key: `side-assistant:${context.state.id}`, kind: 'side-assistant', id: context.state.id, target: SIDE_TARGET, data: context.state }),
+          }
+          const live = {
+            kind: 'side-live',
+            target: SIDE_TARGET,
+            match: event => (event?.type === 'assistant/attempt'
+              ? { id: liveId(event), role: 'start' }
+              : null),
+            start: (_context, match) => liveState(match.event),
+            update: (_context, match) => liveState(match.event),
+            buildViewNode: context => (context.state === undefined
+              ? null
+              : { key: `side-live:${context.state.id}`, kind: 'side-live', id: context.state.id, target: SIDE_TARGET, data: context.state }),
           }
           const tool = {
             kind: 'side-tool',
@@ -385,23 +663,63 @@ window.__ModuleLoader__.load({
               ? null
               : { key: `side-tool:${context.state.id}`, kind: 'side-tool', id: context.state.id, target: SIDE_TARGET, data: context.state }),
           }
-          return [seed, user, assistant, tool]
+          return [seed, user, assistant, live, tool]
+        }
+
+        /** @param {object} event - assistant/message event. @returns {object} node state. */
+        function assistantState(event) {
+          const message = event?.data?.message ?? {}
+          return {
+            id: String(event.seq),
+            seq: event.seq ?? 0,
+            turn: event?.data?.turn ?? 0,
+            text: blockText(message.content, 'text'),
+            reasoning: blockText(message.content, 'reasoning'),
+            images: blockImages(message.content),
+          }
+        }
+
+        /** @param {object} event - assistant/attempt event. @returns {string} stable id. */
+        function liveId(event) {
+          return `live:${event?.data?.turn ?? 0}:${event?.data?.step ?? 0}`
+        }
+
+        /** @param {object} event - assistant/attempt event. @returns {object} node state. */
+        function liveState(event) {
+          const { text, reasoning } = accumulateStream(event?.data?.stream)
+          return {
+            id: liveId(event),
+            seq: Number.MAX_SAFE_INTEGER - 1,
+            turn: event?.data?.turn ?? 0,
+            text,
+            reasoning,
+            images: [],
+          }
         }
 
         /**
-         * Incremental builder for the side target: keeps the seed boundary and publishes
-         * only the nodes recorded after it.
+         * Incremental builder for the side target: keeps the seed boundary, drops live
+         * attempts once their message is committed, and publishes only nodes after the cut.
          * @returns {object} ConversationViewBuilder.
          */
         function createSideBuilder() {
           let nodes = []
           const publish = () => {
             let boundary = -1
+            let committedTurn = -1
             for (const node of nodes) {
               if (node.kind === 'side-seed') boundary = Math.max(boundary, node.data?.seq ?? -1)
+              if (node.kind === 'side-assistant') committedTurn = Math.max(committedTurn, node.data?.turn ?? -1)
             }
-            const visible = boundary < 0 ? nodes : nodes.filter(node => (node.data?.seq ?? 0) > boundary)
-            return { nodes: visible, inherited: boundary < 0 ? 0 : nodes.length - visible.length }
+            const visible = nodes.filter(node => {
+              if (boundary < 0) return true
+              const seq = node.data?.seq ?? 0
+              if (node.kind === 'side-seed') return false
+              if (seq <= boundary) return false
+              if (node.kind === 'side-live' && (node.data?.turn ?? 0) <= committedTurn) return false
+              return true
+            })
+            return { nodes: visible, inherited: nodes.length - visible.length }
           }
           return {
             empty: { nodes: [], inherited: 0 },
@@ -432,24 +750,6 @@ window.__ModuleLoader__.load({
           }
         }
 
-        /** One collapsible block used for reasoning and tool output. */
-        function Disclosure({ summary, children, defaultOpen }) {
-          const [open, setOpen] = React.useState(Boolean(defaultOpen))
-          return h('div', { style: { margin: '6px 0' } },
-            h('button', {
-              type: 'button',
-              onClick: () => setOpen(value => !value),
-              style: {
-                display: 'flex', alignItems: 'center', gap: '6px', width: '100%', textAlign: 'left',
-                padding: '4px 8px', border: 'none', borderRadius: 'var(--dsw-radius-md, 8px)',
-                background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer',
-                opacity: 0.75,
-              },
-            }, h('span', { style: { fontSize: '11px' } }, open ? '▾' : '▸'), summary),
-            open ? h('div', { style: { padding: '4px 12px 8px', whiteSpace: 'pre-wrap', opacity: 0.85 } }, children) : null,
-          )
-        }
-
         /** The side panel transcript: only what this session recorded after the fork cut. */
         function SideTranscript(props) {
           const sessionId = typeof props.sessionId === 'string' ? props.sessionId : undefined
@@ -465,29 +765,44 @@ window.__ModuleLoader__.load({
           const snapshot = useObservable(source)
           const nodes = Array.isArray(snapshot?.nodes) ? snapshot.nodes : []
           const inherited = typeof snapshot?.inherited === 'number' ? snapshot.inherited : 0
-          const bottom = React.useRef(null)
+          const body = React.useRef(null)
+          const pinned = React.useRef(true)
+          const streamLength = nodes.reduce((total, node) => total + String(node.data?.text ?? '').length, 0)
 
           React.useEffect(() => {
-            const element = bottom.current
-            if (element !== null && typeof element.scrollIntoView === 'function') {
-              element.scrollIntoView({ block: 'end' })
+            const element = body.current
+            const scroller = element?.closest?.('[data-conversation-scroll]') ?? null
+            if (scroller === null) return undefined
+            const onScroll = () => {
+              pinned.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48
             }
-          }, [nodes.length])
+            onScroll()
+            scroller.addEventListener('scroll', onScroll, { passive: true })
+            return () => scroller.removeEventListener('scroll', onScroll)
+          }, [])
+
+          React.useEffect(() => {
+            const element = body.current
+            const scroller = element?.closest?.('[data-conversation-scroll]') ?? null
+            if (scroller === null) {
+              element?.scrollIntoView?.({ block: 'end' })
+              return
+            }
+            if (pinned.current) scroller.scrollTop = scroller.scrollHeight
+          }, [nodes.length, streamLength])
 
           return h('div', {
+            ref: body,
             style: {
-              display: 'flex', flexDirection: 'column', width: '100%', height: '100%',
-              minWidth: 0, minHeight: 0, overflow: 'auto',
-            },
-          },
-          h('div', {
-            style: {
-              display: 'flex', flexDirection: 'column', gap: 'var(--dsh-assistant-block-gap, 16px)',
+              display: 'flex', flexDirection: 'column',
               width: '100%', maxWidth: 'var(--dsh-chat-content-width, 748px)',
-              margin: '0 auto', padding: '12px 16px 24px', boxSizing: 'border-box',
+              margin: '0 auto', boxSizing: 'border-box',
+              padding: '12px 16px calc(var(--dsh-composer-height, 96px) + 20px)',
               fontSize: 'var(--dsh-content-font-size, 14px)', lineHeight: 1.65,
+              gap: 'var(--dsh-assistant-block-gap, 16px)',
             },
           },
+          h('style', { key: 'blink' }, '@keyframes dsh-side-blink{50%{opacity:0}}'),
           inherited > 0
             ? h('div', {
               style: {
@@ -507,23 +822,35 @@ window.__ModuleLoader__.load({
                     background: 'var(--dsw-specific-input-major, rgba(127,127,127,0.14))',
                     whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                   },
-                }, data.text))
+                },
+                data.text,
+                ...(data.images ?? []).map((block, index) => h(ImageBlock, { key: `i${index}`, sessionId, block }))))
             }
-            if (node.kind === 'side-assistant') {
+            if (node.kind === 'side-assistant' || node.kind === 'side-live') {
               return h('div', { key: node.key, style: { display: 'flex', flexDirection: 'column' } },
                 data.reasoning !== ''
                   ? h(Disclosure, { key: 'reasoning', summary: '思考过程' }, data.reasoning)
                   : null,
-                h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, data.text))
+                data.text === '' && node.kind === 'side-live'
+                  ? h('div', { key: 'waiting', style: { opacity: 0.55 } }, '思考中…')
+                  : h(Markdown, { key: 'body', text: data.text ?? '' }),
+                ...(data.images ?? []).map((block, index) => h(ImageBlock, { key: `i${index}`, sessionId, block })),
+                node.kind === 'side-live'
+                  ? h('span', {
+                    key: 'caret',
+                    style: {
+                      display: 'inline-block', width: '7px', height: '1em', marginLeft: '2px',
+                      background: 'currentColor', opacity: 0.6, animation: 'dsh-side-blink 1s steps(2) infinite',
+                    },
+                  })
+                  : null)
             }
             if (node.kind === 'side-tool') {
-              return h(Disclosure, { key: node.key, summary: `工具调用 · ${data.name}` },
-                `${data.args}${data.result === '' ? '' : `\n\n${data.result}`}`)
+              return h(ToolRow, { key: node.key, data })
             }
             return null
           }),
-          h('div', { key: 'bottom', ref: bottom }),
-          ))
+          )
         }
 
         /** The product's own conversation shell, with our transcript in its view position. */
@@ -590,7 +917,7 @@ window.__ModuleLoader__.load({
           return h('div', {
             'data-side-chat': '',
             style: { display: 'flex', width: '100%', height: '100%', minWidth: 0, minHeight: 0 },
-          }, h(SessionProvider, { session: retained }, renderSlot(CHAT_SLOT, { sessionId })))
+          }, h(SessionProvider, { session: retained }, renderSlot(TRANSCRIPT_SEAT, { sessionId })))
         }
 
         /**
@@ -661,7 +988,7 @@ window.__ModuleLoader__.load({
             () => scope.slots.register({
               name: 'sidebar.right.pane.tab',
               key: TAB_ID,
-              children: { [CHAT_SLOT]: { kind: 'single', scope: 'session' } },
+              children: { [TRANSCRIPT_SEAT]: { kind: 'single', scope: 'session' } },
             }, SideTab),
           )), 'dsh-side: side conversation tab body')
 
@@ -692,9 +1019,9 @@ window.__ModuleLoader__.load({
             () => scope.slots.register({ name: 'sidebar.right.pane.tab', key: PAGE_ID }, NewSideTab),
           )), 'dsh-side: side conversation guide page')
 
-          scope.effect(() => scope.slots.inject(CHAT_SLOT, () => guardSlot(
+          scope.effect(() => scope.slots.inject(TRANSCRIPT_SEAT, () => guardSlot(
             'side conversation content',
-            () => scope.slots.register({ name: CHAT_SLOT }, OfficialChatPanel),
+            () => scope.slots.register({ name: TRANSCRIPT_SEAT }, OfficialChatPanel),
           )), 'dsh-side: side conversation content')
         }
 

@@ -197,11 +197,11 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
 {
   const c = makeClient()
   const body = c.calls.registrations.find(r => r.name === 'sidebar.right.pane.tab')
-  check('tab body declares only its conversation child', JSON.stringify(Object.keys(body?.children ?? {})) === '["side.chat.conversation"]', body?.children)
+  check('tab body declares only its conversation child', JSON.stringify(Object.keys(body?.children ?? {})) === '["side.chat.transcript"]', body?.children)
   const title = c.calls.registrations.find(r => r.name === 'sidebar.right.pane.tab.title')
   check('registers the chip title component', title?.key === 'dsh-side/chat', title)
   check('injects the conversation service for the transcript', c.calls.injected.some(deps => deps.includes('uiConversation')), c.calls.injected)
-  check('content seat registered', c.calls.registrations.some(r => r.name === 'side.chat.conversation'))
+  check('content seat registered', c.calls.registrations.some(r => r.name === 'side.chat.transcript'))
   const tab = c.calls.tabs[0]
   check('tab type still opens our addresses', tab?.canOpen('dsh-resource://sidechat/session/x') === true)
 }
@@ -215,6 +215,7 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   const kinds = c.calls.eventDefinitions.map(d => d.kind)
   check('registers the seed boundary definition', kinds.includes('side-seed'), kinds)
   check('registers user/assistant/tool definitions', kinds.includes('side-user') && kinds.includes('side-assistant') && kinds.includes('side-tool'), kinds)
+  check('registers the live attempt definition', kinds.includes('side-live'), kinds)
   const builder = c.calls.views[0]?.create()
   check('builder publishes an empty snapshot', Array.isArray(builder?.empty?.nodes) && builder.empty.inherited === 0, builder?.empty)
   builder?.replace?.({ nodes: [
@@ -222,8 +223,17 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
     { key: 'user:1', kind: 'side-user', id: '1', target: 'side', data: { seq: 3, text: 'older' } },
     { key: 'user:2', kind: 'side-user', id: '2', target: 'side', data: { seq: 7, text: 'own' } },
   ], timeline: {} })
-  const snapshot = builder.replace({ nodes: [], timeline: {} })
-  check('drops the inherited prefix', Array.isArray(snapshot?.nodes) && snapshot.nodes.length === 0, snapshot)
+  builder.replace({ nodes: [], timeline: {} })
+  const withLive = builder.replace({ nodes: [
+    { key: 'seed', kind: 'side-seed', id: 'seed', target: 'side', data: { seq: 5 } },
+    { key: 'a1', kind: 'side-assistant', id: '1', target: 'side', data: { seq: 7, turn: 1, text: 'answer' } },
+    { key: 'l1', kind: 'side-live', id: 'live:1:1', target: 'side', data: { seq: 9007199254740990, turn: 1, text: 'answer' } },
+    { key: 'l2', kind: 'side-live', id: 'live:2:1', target: 'side', data: { seq: 9007199254740990, turn: 2, text: 'next' } },
+  ], timeline: {} })
+  const liveIds = (withLive?.nodes ?? []).filter(node => node.kind === 'side-live').map(node => node.id)
+  check('drops the inherited prefix', (withLive?.nodes ?? []).every(node => node.kind !== 'side-seed'), withLive?.nodes)
+  check('drops a live attempt once its message committed', !liveIds.includes('live:1:1'), liveIds)
+  check('keeps the running attempt', liveIds.includes('live:2:1'), liveIds)
 }
 
 // --- 2b. the start page carries our card and its page type

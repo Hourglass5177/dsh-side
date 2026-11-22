@@ -95,7 +95,8 @@ The side session joins the workspace of the conversation it was started from, ti
 ## Known limits
 
 - **The transcript is drawn by this plugin**: the shell and composer are the product's own, but message rows, tool rows and reasoning blocks come from the plugin, so typography is close to — not pixel-identical with — the main panel. That is the price of lossless context plus a clean panel plus the official composer.
-- **Streaming is not wired yet**: an answer appears once its message is logged; the panel shows a static line while it runs.
+- **Streaming is wired**: text and reasoning appear while the attempt runs and are replaced by the committed message.
+- **A Markdown subset**: fenced code, inline code, lists, headings, bold/italic and link labels; tables, footnotes and math are not rendered.
 - **Deletion is best-effort**: if the app exits between archiving and the cleanup sweep, the session is deleted after the next start.
 - Side sessions are listed as 「Side session」, then 「（2）」, 「（3）」 for the ones still open; numbers follow the sessions that exist.
 
