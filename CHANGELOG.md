@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0]
+
+### Fixed
+
+- The side session no longer shows up in the session list: it is archived right
+  after creation while staying live, and only its closed title is reclaimed.
+- The permission preset is copied from the parent's live state. A seeded session
+  keeps the preset recorded at event zero, so a conversation that switched to a
+  wider preset later used to hand the side session the older one.
+
+### Changed
+
+- The Host half reclaims storage only for sessions titled `〔side-closed〕`, so a
+  hidden but open side session is never deleted underneath its tab.
+
 ## [3.3.1]
 
 ### Changed

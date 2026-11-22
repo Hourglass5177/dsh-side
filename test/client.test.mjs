@@ -156,6 +156,8 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   check('opens the side panel', typeof address === 'string' && address.endsWith('/child-side-1'), address)
   check('opens the sidechat kind', c.calls.open[0]?.opts?.kind === 'sidechat', c.calls.open[0]?.opts)
   check('remembers the child for cleanup', JSON.parse(store.get('dsh-side.sessions.v1') ?? '[]').includes('child-side-1'))
+  check('hides it from the lists without stopping it', c.calls.archive[0]?.sessionId === 'child-side-1'
+    && c.calls.archive[0]?.opts?.stopActivity === undefined, c.calls.archive[0])
 }
 
 // --- 2. the tab renders the product's conversation, declares no custom renderer
@@ -193,8 +195,10 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   await settle()
   c.runClose('parent-1', { contentId: 'dsh-resource://sidechat/session/child-side-1' })
   await settle()
-  check('close archives with stopActivity', c.calls.archive[0]?.sessionId === 'child-side-1'
-    && c.calls.archive[0]?.opts?.stopActivity === true, c.calls.archive[0])
+  check('close retitles it as closed', c.calls.renamed.includes('〔side-closed〕'), c.calls.renamed)
+  const closeCall = c.calls.archive.at(-1)
+  check('close archives with stopActivity', closeCall?.sessionId === 'child-side-1'
+    && closeCall?.opts?.stopActivity === true, closeCall)
   check('closed session is forgotten', !JSON.parse(store.get('dsh-side.sessions.v1') ?? '[]').includes('child-side-1'))
 }
 

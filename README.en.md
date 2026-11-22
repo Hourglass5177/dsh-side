@@ -38,6 +38,8 @@ The context itself is injected: the host reads the parent's model-visible messag
 
 The record appears as a collapsed entry at the top of the panel; expanding it shows what was inherited.
 
+The permission preset follows the main conversation's current choice, so the side session does not ask again for what was already allowed.
+
 ## Install
 
 Requires DeepSeek Harness **0.2.2+** (Desktop or Web).
@@ -74,7 +76,9 @@ Two entry points with the same result:
 
 Ask in the composer at the bottom; answers stream as usual. Continue asking in the same panel to keep the side session going.
 
-**Closing the tab ends it**: the side session stops, leaves every list, and its stored transcript is deleted (the whole session directory is removed).
+The side session never appears in the session list: it is archived right after creation while staying live.
+
+**Closing the tab ends it**: the side session stops and its stored transcript is deleted (the whole session directory is removed).
 
 ## Implementation
 

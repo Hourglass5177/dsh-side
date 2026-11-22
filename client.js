@@ -43,6 +43,9 @@ window.__ModuleLoader__.load({
     /** Title marker the Host half watches: `〔side〕<parentSessionId>`. */
     const SIDE_MARK = '〔side〕'
 
+    /** Title a side session carries once its tab closed; the Host reaper deletes these. */
+    const SIDE_CLOSED_MARK = '〔side-closed〕'
+
     /** Localized copy namespace. */
     const NS = 'dsh-side'
 
@@ -201,6 +204,9 @@ window.__ModuleLoader__.load({
          */
         async function retire(sessionId) {
           forget(sessionId)
+          // Mark it closed first: the Host only reclaims storage for closed sessions,
+          // so a live one stays hidden without being deleted underneath its tab.
+          await renameSideSession(sessionId, SIDE_CLOSED_MARK)
           try {
             await ctx.uiWorkspace.archiveSession(sessionId, { stopActivity: true })
           } catch (error) {
@@ -209,13 +215,12 @@ window.__ModuleLoader__.load({
         }
 
         /**
-         * Title the side Session with the marker the Host half reads to find its
-         * parent. The title is the only durable fact a browser can write that the
-         * Host observes without adding a slash command.
-         * @param {string} sessionId - the new side Session.
-         * @param {string} parentSessionId - the thread it inherits from.
+         * Rename a side Session while it is retained. The title is the only durable
+         * fact a browser can write that the Host observes without a slash command.
+         * @param {string} sessionId - the side Session.
+         * @param {string} title - new title.
          */
-        async function markSideSession(sessionId, parentSessionId) {
+        async function renameSideSession(sessionId, title) {
           let reference
           try {
             reference = ctx.sessions.retain(sessionId, { source: REFERENCE_SOURCE })
@@ -227,7 +232,7 @@ window.__ModuleLoader__.load({
             const scope = ctx.sessions.scope?.(sessionId)
             const face = scope === undefined ? undefined : ctx.sessions.sessionOf?.(scope)
             if (face === undefined || typeof face.rename !== 'function') return
-            const renamed = await face.rename(`${SIDE_MARK}${parentSessionId}`)
+            const renamed = await face.rename(title)
             if (renamed !== undefined && renamed.ok === false) {
               console.warn('[dsh-side] could not title the side conversation:', renamed.error)
             }
@@ -239,6 +244,33 @@ window.__ModuleLoader__.load({
             } catch (_alreadyReleased) {
               // Releasing twice is harmless.
             }
+          }
+        }
+
+        /**
+         * Title the side Session the way the Host expects to find it.
+         * @param {string} sessionId - the new side Session.
+         * @param {string} parentSessionId - the thread it inherits from.
+         */
+        async function markSideSession(sessionId, parentSessionId) {
+          await renameSideSession(sessionId, `${SIDE_MARK}${parentSessionId}`)
+        }
+
+        /**
+         * Hide a live side Session from every list without stopping it.
+         *
+         * The session stays alive for its sidebar tab; archiving only removes it from
+         * the workspace views, which is what keeps a temporary conversation out of the
+         * session list. The Host reaper ignores it until the title becomes
+         * `〔side-closed〕`.
+         *
+         * @param {string} sessionId - the new side Session.
+         */
+        async function hideFromLists(sessionId) {
+          try {
+            await ctx.uiWorkspace.archiveSession(sessionId)
+          } catch (error) {
+            console.warn('[dsh-side] could not hide the side conversation from the lists:', error)
           }
         }
 
@@ -455,6 +487,7 @@ window.__ModuleLoader__.load({
           }
           remember(childId)
           await markSideSession(childId, parentSessionId)
+          await hideFromLists(childId)
           return childId
         }
 

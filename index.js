@@ -23,8 +23,11 @@ import path from 'node:path'
 /** Services this plugin needs; without them it stays inactive instead of throwing. */
 export const inject = ['workspaceRegistry', 'sessionQuery']
 
-/** Title marker the Client writes: `〔side〕<parentSessionId>`. */
+/** Title marker the Client writes for an open side session. */
 const SIDE_MARK = '〔side〕'
+
+/** Title marker the Client writes when the tab closes; only these are reclaimed. */
+const SIDE_CLOSED_MARK = '〔side-closed〕'
 
 /** A Session id is used as one path segment, so reject anything path-like. */
 const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/u
@@ -274,6 +277,21 @@ export function apply(ctx, config) {
     } catch (error) {
       ctx.logger?.warn?.(`dsh-side: could not inject the inherited context into "${sessionId}": ${String(error)}`)
     }
+    // A seeded session keeps the permission preset recorded at event zero, which can be
+    // older than the parent's current choice. Copy the live preset so the side session
+    // does not ask for approval the main conversation already granted.
+    try {
+      const presets = ctx.permissionPresets ?? ctx.get?.('permissionPresets')
+      if (presets !== undefined && typeof presets.current === 'function' && typeof presets.set === 'function') {
+        const preset = presets.current(parentAgent.session)
+        if (typeof preset === 'string' && preset !== '' && preset !== 'custom') {
+          presets.set(agent.session, preset)
+          ctx.logger?.info?.(`dsh-side: copied permission preset "${preset}" into "${sessionId}"`)
+        }
+      }
+    } catch (error) {
+      ctx.logger?.warn?.(`dsh-side: could not copy the permission preset into "${sessionId}": ${String(error)}`)
+    }
   }
 
   ctx.effect(() => ctx.on('agent/created', (...args) => {
@@ -305,7 +323,7 @@ export function apply(ctx, config) {
         } catch (_unreadableTitle) {
           continue
         }
-        if (!String(title?.title ?? '').startsWith(SIDE_MARK)) continue
+        if (!String(title?.title ?? '').startsWith(SIDE_CLOSED_MARK)) continue
         await purge(ctx, sessionId, roots)
       }
     } finally {

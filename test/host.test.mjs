@@ -125,7 +125,33 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
   check('warns about the empty parent', empty.calls.warns.some(m => m.includes('no visible messages')), empty.calls.warns)
 }
 
-// --- 5. reaper still purges a closed side conversation
+// --- 5. the parent's live permission preset is copied to the child
+{
+  const applied = []
+  const child = { session: { header: { id: 'child-perm-1' } }, async inject() {} }
+  const parent = { session: { deriveMessages: () => PARENT_MESSAGES } }
+  const ctx = makeCtx({ titles: { 'child-perm-1': '〔side〕parent-perm' }, parents: { 'parent-perm': parent } })
+  ctx.permissionPresets = {
+    current: session => (session === parent.session ? 'danger-full-access' : 'custom'),
+    set: (session, preset) => { applied.push({ session, preset }) },
+  }
+  mod.apply(ctx, fast)
+  ctx.emitCreated(child)
+  await sleep(120)
+  check('copies the parent preset', applied.length === 1 && applied[0].preset === 'danger-full-access', applied)
+  check('applies it to the child session', applied[0]?.session === child.session, applied[0]?.session === child.session)
+
+  // an unmatched custom state must not be written
+  const other = { session: { header: { id: 'child-perm-2' } }, async inject() {} }
+  const ctx2 = makeCtx({ titles: { 'child-perm-2': '〔side〕parent-perm' }, parents: { 'parent-perm': parent } })
+  ctx2.permissionPresets = { current: () => 'custom', set: () => { applied.push('unexpected') } }
+  mod.apply(ctx2, fast)
+  ctx2.emitCreated(other)
+  await sleep(120)
+  check('never writes the custom state', !applied.includes('unexpected'), applied)
+}
+
+// --- 6. reaper still purges a closed side conversation
 {
   const root = await mkdtemp(path.join(tmpdir(), 'dsh-side-reap-'))
   const bucket = path.join(root, '--F-test-bucket--')
@@ -137,7 +163,7 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
   }
   const ctx = makeCtx({
     archived: [sideId, otherId],
-    titles: { [sideId]: `〔side〕parent-1`, [otherId]: 'ordinary title' },
+    titles: { [sideId]: `〔side-closed〕parent-1`, [otherId]: 'ordinary title' },
   })
   mod.apply(ctx, {
     sessionsRoot: root, firstSweepDelayMs: 5, sweepIntervalMs: 20,
