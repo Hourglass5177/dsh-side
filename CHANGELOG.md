@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.2]
+
+### Fixed
+
+- Context injection now sends a complete `UserMessage` (`id`, `role: 'user'`,
+  `content`, `source`). `Agent.inject()` stores the message verbatim, so the earlier
+  `{ content, source }` shape was rejected and the side session never actually
+  received the inherited conversation.
+- The workspace detach runs last and is no longer awaited, so it cannot delay the
+  injection or the permission copy.
+
 ## [3.4.1]
 
 ### Fixed

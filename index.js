@@ -16,6 +16,7 @@
  *
  * @module dsh-side
  */
+import { randomUUID } from 'node:crypto'
 import { readdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -271,26 +272,18 @@ export function apply(ctx, config) {
       ctx.logger?.warn?.('dsh-side: the parent conversation has no visible messages to inherit')
       return
     }
+    // `inject()` takes a complete UserMessage, not a bare `{ content, source }`: the
+    // inbox stores it verbatim and rejects a message without an id and a role.
     try {
-      await agent.inject({ content: blocks, source: { kind: 'side-context' } })
+      agent.inject({
+        id: `side-context-${randomUUID()}`,
+        role: 'user',
+        content: blocks,
+        source: { kind: 'side-context' },
+      })
       ctx.logger?.info?.(`dsh-side: inherited ${blocks[0].text.length} characters into side conversation "${sessionId}"`)
     } catch (error) {
       ctx.logger?.warn?.(`dsh-side: could not inject the inherited context into "${sessionId}": ${String(error)}`)
-    }
-    // Keep the temporary conversation out of the session list without archiving it:
-    // an archived Session is refused a model step by the controller's gate. Detaching
-    // removes it from the workspace account, and the session keeps running for its tab.
-    try {
-      const workspaces = ctx.workspaceRegistry?.list?.() ?? []
-      for (const workspace of workspaces) {
-        if (Array.isArray(workspace.sessionIds) && workspace.sessionIds.includes(sessionId)) {
-          await workspace.detachSession(sessionId)
-          ctx.logger?.info?.(`dsh-side: detached side conversation "${sessionId}" from its workspace`)
-          break
-        }
-      }
-    } catch (error) {
-      ctx.logger?.warn?.(`dsh-side: could not detach "${sessionId}" from its workspace: ${String(error)}`)
     }
     // A seeded session keeps the permission preset recorded at event zero, which can be
     // older than the parent's current choice. Copy the live preset so the side session
@@ -307,6 +300,24 @@ export function apply(ctx, config) {
     } catch (error) {
       ctx.logger?.warn?.(`dsh-side: could not copy the permission preset into "${sessionId}": ${String(error)}`)
     }
+    // Keep the temporary conversation out of the session list without archiving it: an
+    // archived Session is refused a model step by the controller's gate. Detaching
+    // removes it from the workspace account while the session keeps running for its tab.
+    // Runs last and is not awaited, so a slow workspace write cannot delay inheritance.
+    void (async () => {
+      try {
+        const workspaces = ctx.workspaceRegistry?.list?.() ?? []
+        for (const workspace of workspaces) {
+          if (Array.isArray(workspace.sessionIds) && workspace.sessionIds.includes(sessionId)) {
+            await workspace.detachSession(sessionId)
+            ctx.logger?.info?.(`dsh-side: detached side conversation "${sessionId}" from its workspace`)
+            break
+          }
+        }
+      } catch (error) {
+        ctx.logger?.warn?.(`dsh-side: could not detach "${sessionId}" from its workspace: ${String(error)}`)
+      }
+    })()
   }
 
   ctx.effect(() => ctx.on('agent/created', (...args) => {

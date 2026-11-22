@@ -75,6 +75,8 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
   check('injects the parent conversation', text.includes('refactor the auth module') && text.includes('split token storage'), text.slice(0, 120))
   check('labels the speakers', text.includes('User:') && text.includes('Assistant:'), text)
   check('marks the source', callsOf.inject[0]?.source?.kind === 'side-context', callsOf.inject[0]?.source)
+  check('sends a complete user message', callsOf.inject[0]?.role === 'user'
+    && typeof callsOf.inject[0]?.id === 'string' && callsOf.inject[0].id.length > 0, callsOf.inject[0])
   check('reports the inheritance', ctx.calls.infos.some(m => m.includes('inherited')), ctx.calls.infos)
 
   // duplicate creation events must not double-inject
