@@ -17,6 +17,7 @@
  * @module dsh-side
  */
 import { randomUUID } from 'node:crypto'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { readdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -60,6 +61,34 @@ function sleep(ms) {
     const timer = setTimeout(resolve, ms)
     timer.unref?.()
   })
+}
+
+/**
+ * Append one line to `<DSH_HOME>/dsh-side.log`. The Host has no console the user can
+ * read, so this file is the only way to tell why inheritance did or did not happen.
+ * @param {string} message - line to record.
+ */
+function logLine(message) {
+  try {
+    const home = process.env.DSH_HOME ?? path.join(homedir(), '.dsh')
+    mkdirSync(home, { recursive: true })
+    appendFileSync(path.join(home, 'dsh-side.log'), `${new Date().toISOString()} ${message}\n`)
+  } catch (_unwritableLog) {
+    // Diagnostics must never break the feature.
+  }
+}
+
+/**
+ * Resolve the Agent registry: a plugin may reach it as a property or via `get`.
+ * @param {any} ctx - Host plugin context.
+ * @returns {any} the registry, when available.
+ */
+function agentsOf(ctx) {
+  try {
+    return ctx.agents ?? ctx.get?.('agents')
+  } catch (_noAgents) {
+    return undefined
+  }
 }
 
 /**
@@ -126,6 +155,7 @@ async function purge(ctx, sessionId, roots) {
   }
   try {
     await rm(directory, { recursive: true, force: true })
+    logLine(`purged ${sessionId}`)
     ctx.logger?.info?.(`dsh-side: purged side conversation "${sessionId}"`)
   } catch (error) {
     ctx.logger?.warn?.(`dsh-side: could not purge side conversation "${sessionId}": ${String(error)}`)
@@ -174,6 +204,35 @@ function speakerOf(role) {
     case 'system': return 'System'
     default: return 'Context'
   }
+}
+
+/**
+ * Build the injected context from persisted parent events. Used when the parent
+ * Agent is not live: the same conversation, read from storage instead of memory.
+ * @param {any} observation - `sessionQuery.observeSession` result.
+ * @returns {object[]} content blocks, empty when there is nothing to inherit.
+ */
+function inheritedBlocksFromEvents(observation) {
+  const events = Array.isArray(observation?.events) ? observation.events : []
+  const lines = []
+  for (const event of events) {
+    const data = event?.data
+    if (event?.type === 'user/message') {
+      if (data?.source?.kind !== 'user') continue
+      const text = textOfMessage(data)
+      if (text !== '') lines.push(`User: ${text}`)
+    } else if (event?.type === 'assistant/message') {
+      const text = textOfMessage(data?.message ?? data)
+      if (text !== '') lines.push(`Assistant: ${text}`)
+    }
+  }
+  if (lines.length === 0) return []
+  let body = lines.join('\n\n')
+  if (body.length > INHERITED_TEXT_LIMIT) body = body.slice(body.length - INHERITED_TEXT_LIMIT)
+  return [{
+    type: 'text',
+    text: `Context inherited from the main conversation. It is background; continue from the question that follows.\n\n${body}`,
+  }]
 }
 
 /**
@@ -246,14 +305,45 @@ export function apply(ctx, config) {
       parentAgent = undefined
     }
     if (parentAgent === undefined || parentAgent === null) {
+      logLine(`parent ${parentId} is not a live agent; falling back to storage`)
       ctx.logger?.warn?.(`dsh-side: parent conversation "${parentId}" is not live; side conversation starts without inherited context`)
+      // Storage can still supply the conversation, so continue instead of returning.
+      const blocks = await (async () => {
+        try {
+          return inheritedBlocksFromEvents(await ctx.sessionQuery?.observeSession?.(parentId))
+        } catch (error) {
+          logLine(`storage read failed for ${parentId}: ${String(error)}`)
+          return []
+        }
+      })()
+      if (blocks.length === 0) return
+      try {
+        agent.inject({
+          id: `side-context-${randomUUID()}`,
+          role: 'user',
+          content: blocks,
+          source: { kind: 'side-context' },
+        })
+        logLine(`injected ${blocks[0].text.length} chars from storage into ${sessionId}`)
+      } catch (error) {
+        logLine(`storage-path inject failed for ${sessionId}: ${String(error)}`)
+      }
       return
     }
-    const blocks = inheritedBlocks(parentAgent)
+    let blocks = inheritedBlocks(parentAgent)
     if (blocks.length === 0) {
+      try {
+        blocks = inheritedBlocksFromEvents(await ctx.sessionQuery?.observeSession?.(parentId))
+      } catch (error) {
+        logLine(`storage read failed for ${parentId}: ${String(error)}`)
+      }
+    }
+    if (blocks.length === 0) {
+      logLine(`no visible messages to inherit from ${parentId}`)
       ctx.logger?.warn?.('dsh-side: the parent conversation has no visible messages to inherit')
       return
     }
+    logLine(`inheriting ${blocks[0].text.length} chars from ${parentId} into ${sessionId}`)
     // `inject()` takes a complete UserMessage, not a bare `{ content, source }`: the
     // inbox stores it verbatim and rejects a message without an id and a role.
     try {
@@ -263,6 +353,7 @@ export function apply(ctx, config) {
         content: blocks,
         source: { kind: 'side-context' },
       })
+      logLine(`injected ${blocks[0].text.length} chars into ${sessionId}`)
       ctx.logger?.info?.(`dsh-side: inherited ${blocks[0].text.length} characters into side conversation "${sessionId}"`)
     } catch (error) {
       ctx.logger?.warn?.(`dsh-side: could not inject the inherited context into "${sessionId}": ${String(error)}`)
@@ -308,10 +399,35 @@ export function apply(ctx, config) {
       if (value === null || typeof value !== 'object') continue
       const agent = value.session !== undefined ? value : value.agent
       if (agent === undefined || agent === null || typeof agent.inject !== 'function') continue
+      logLine(`agent/created ${agent.session?.header?.id ?? '?'}`)
       void inherit(agent)
       return
     }
   }), 'dsh-side: inherited context')
+
+  // The creation event is not the only path: poll the registry so a missed or
+  // late delivery still resolves every side session that exists.
+  ctx.effect(() => {
+    const sweep = () => {
+      let agents
+      try {
+        agents = agentsOf(ctx)?.list?.() ?? []
+      } catch (_unreadableAgents) {
+        return
+      }
+      for (const agent of agents) {
+        const sessionId = agent?.session?.header?.id
+        if (typeof sessionId !== 'string' || !sessionId.startsWith(SIDE_ID_PREFIX)) continue
+        if (injected.has(sessionId)) continue
+        if (typeof agent.inject !== 'function') continue
+        void inherit(agent)
+      }
+    }
+    const timer = setInterval(sweep, 700)
+    timer.unref?.()
+    sweep()
+    return () => { clearInterval(timer) }
+  }, 'dsh-side: side session watcher')
 
   // ---- reaper ------------------------------------------------------------
 

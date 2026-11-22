@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.1]
+
+### Fixed
+
+- The Host no longer depends on the `agent/created` delivery alone: it also polls the
+  Agent registry every 700 ms for side-prefixed sessions, so a missed event cannot
+  strand a session without inherited context.
+- When the parent agent is not live, the inherited text is rebuilt from persisted
+  events (`sessionQuery.observeSession`) instead of giving up.
+
+### Added
+
+- The Host writes `<DSH_HOME>/dsh-side.log` with one line per step: agent seen, parent
+  resolved, injected character count, permission copy, purge. The Host has no console
+  the user can read, and every earlier silent failure was invisible without this file.
+
 ## [3.5.0]
 
 ### Changed
