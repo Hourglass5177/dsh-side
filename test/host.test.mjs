@@ -42,7 +42,9 @@ function makeCtx(options = {}) {
       get archivedSessionIds() { return options.archived ?? [] },
       list() { return options.workspaces ?? [] },
     },
+    get observeSession() { return options.observe },
     sessionQuery: {
+      observeSession: (...args) => (options.observe ? options.observe(...args) : Promise.reject(new Error('not observed'))),
       async readTitle(sessionId) {
         const title = options.titles?.[sessionId]
         return title === undefined ? undefined : { title, eventSeq: 1, updatedAt: 0 }
@@ -130,7 +132,41 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
   check('warns about the empty parent', empty.calls.warns.some(m => m.includes('no visible messages')), empty.calls.warns)
 }
 
-// --- 5. the parent's live permission preset is copied to the child
+// --- 5a. the new session is attached to the parent's workspace
+{
+  const attached = []
+  const workspace = {
+    id: 'ws-1',
+    sessionIds: ['parent-attach'],
+    async attachSession(id) { attached.push(id) },
+    detachSession() {},
+  }
+  const child = { session: { header: { id: 'session-side-parent-attach-0123abcd' } }, async inject() {} }
+  const parent = { session: { deriveMessages: () => PARENT_MESSAGES } }
+  const ctx = makeCtx({ parents: { 'parent-attach': parent }, workspaces: [workspace] })
+  mod.apply(ctx, fast)
+  ctx.emitCreated(child)
+  await sleep(150)
+  check('attaches the side session to the parent workspace', attached.length === 1 && attached[0] === 'session-side-parent-attach-0123abcd', attached)
+}
+
+// --- 5b. an unloaded parent still contributes its recorded preset
+{
+  const applied = []
+  const child = { session: { header: { id: 'session-side-parent-stored-0123abcd' } }, async inject() {} }
+  const ctx = makeCtx({ parents: {}, observe: () => ({ events: [
+    { type: 'permission/preset', seq: 0, data: { preset: 'workspace-write' } },
+    { type: 'permission/preset', seq: 9, data: { preset: 'danger-full-access' } },
+  ] }) })
+  ctx.sessionQuery.observeSession = ctx.observeSession
+  ctx.permissionPresets = { current: () => undefined, set: (session, preset) => { applied.push(preset) } }
+  mod.apply(ctx, fast)
+  ctx.emitCreated(child)
+  await sleep(150)
+  check('reads the stored preset when the parent is unloaded', applied.length === 1 && applied[0] === 'danger-full-access', applied)
+}
+
+// --- 6. the parent's live permission preset is copied to the child
 {
   const applied = []
   const child = { session: { header: { id: 'session-side-parent-perm-0123abcd' } }, async inject() {} }
@@ -156,7 +192,7 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
   check('never writes the custom state', !applied.includes('unexpected'), applied)
 }
 
-// --- 6. reaper purges an archived side session by its id
+// --- 7. reaper purges an archived side session by its id
 {
   const root = await mkdtemp(path.join(tmpdir(), 'dsh-side-reap-'))
   const bucket = path.join(root, '--F-test-bucket--')

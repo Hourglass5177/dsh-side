@@ -9,6 +9,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1]
+
+### Fixed
+
+- The permission copy also runs when the parent agent is unloaded — the common case,
+  since an idle agent is disposed. It falls back to the last `permission/preset`
+  recorded in the parent log instead of skipping inheritance entirely.
+- The Host attaches the new session to the parent workspace. The browser half cannot
+  name that workspace reliably, which is why side sessions still landed in
+  「未分组」.
+- The panel retains its own session reference for its lifetime instead of re-reading a
+  releasing resource on every tick. That churn is what made tool details collapse,
+  the panel flicker, and the stop button miss the live session.
+
 ## [1.2.0]
 
 ### Changed

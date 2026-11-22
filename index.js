@@ -266,6 +266,68 @@ function inheritedBlocks(parentAgent) {
 }
 
 /**
+ * Copy the parent conversation's permission preset onto the side session.
+ *
+ * A live parent exposes its effective preset directly. An unloaded parent (the common
+ * case, since an idle agent is disposed) still has its last recorded selection in the
+ * log, which is what the parent UI displayed.
+ *
+ * @param {any} ctx - Host plugin context.
+ * @param {string} sessionId - the side Session.
+ * @param {any} agent - the side Agent.
+ * @param {any} parentAgent - the live parent Agent, when available.
+ * @param {string} parentId - the parent Session id.
+ */
+async function copyPermissionPreset(ctx, sessionId, agent, parentAgent, parentId) {
+  let presets
+  try {
+    presets = ctx.permissionPresets ?? ctx.get?.('permissionPresets')
+  } catch (_noPresets) {
+    presets = undefined
+  }
+  if (presets === undefined || typeof presets.set !== 'function') {
+    logLine(`no permission service; ${sessionId} keeps its default preset`)
+    return
+  }
+  let preset
+  try {
+    if (parentAgent !== undefined && typeof presets.current === 'function') {
+      preset = presets.current(parentAgent.session)
+    }
+  } catch (error) {
+    logLine(`preset read failed for ${parentId}: ${String(error)}`)
+  }
+  if (typeof preset !== 'string' || preset === '') {
+    // Fall back to the last recorded selection in the parent log.
+    try {
+      const observation = await ctx.sessionQuery?.observeSession?.(parentId)
+      const events = Array.isArray(observation?.events) ? observation.events : []
+      for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index]
+        if (event?.type === 'permission/preset' && typeof event.data?.preset === 'string') {
+          preset = event.data.preset
+          break
+        }
+      }
+    } catch (error) {
+      logLine(`stored preset read failed for ${parentId}: ${String(error)}`)
+    }
+  }
+  if (typeof preset !== 'string' || preset === '' || preset === 'custom') {
+    logLine(`no copyable preset for ${sessionId} (parent ${parentId})`)
+    return
+  }
+  try {
+    presets.set(agent.session, preset)
+    logLine(`copied preset ${preset} into ${sessionId}`)
+    ctx.logger?.info?.(`dsh-side: copied permission preset "${preset}" into "${sessionId}"`)
+  } catch (error) {
+    logLine(`preset write failed for ${sessionId}: ${String(error)}`)
+    ctx.logger?.warn?.(`dsh-side: could not copy the permission preset into "${sessionId}": ${String(error)}`)
+  }
+}
+
+/**
  * Register the context injector and the closed-conversation reaper.
  * @param {any} ctx - Host plugin context.
  * @param {unknown} config - the row's `config` value.
@@ -316,18 +378,21 @@ export function apply(ctx, config) {
           return []
         }
       })()
-      if (blocks.length === 0) return
-      try {
-        agent.inject({
-          id: `side-context-${randomUUID()}`,
-          role: 'user',
-          content: blocks,
-          source: { kind: 'side-context' },
-        })
-        logLine(`injected ${blocks[0].text.length} chars from storage into ${sessionId}`)
-      } catch (error) {
-        logLine(`storage-path inject failed for ${sessionId}: ${String(error)}`)
+      if (blocks.length > 0) {
+        try {
+          agent.inject({
+            id: `side-context-${randomUUID()}`,
+            role: 'user',
+            content: blocks,
+            source: { kind: 'side-context' },
+          })
+          logLine(`injected ${blocks[0].text.length} chars from storage into ${sessionId}`)
+        } catch (error) {
+          logLine(`storage-path inject failed for ${sessionId}: ${String(error)}`)
+        }
       }
+      // Permission inheritance does not depend on there being messages to inherit.
+      await copyPermissionPreset(ctx, sessionId, agent, undefined, parentId)
       return
     }
     let blocks = inheritedBlocks(parentAgent)
@@ -341,9 +406,23 @@ export function apply(ctx, config) {
     if (blocks.length === 0) {
       logLine(`no visible messages to inherit from ${parentId}`)
       ctx.logger?.warn?.('dsh-side: the parent conversation has no visible messages to inherit')
+      await copyPermissionPreset(ctx, sessionId, agent, parentAgent, parentId)
       return
     }
     logLine(`inheriting ${blocks[0].text.length} chars from ${parentId} into ${sessionId}`)
+    // Join the parent workspace so the composer shows the project and the Workspace
+    // files page works. Done here because only the Host can name that workspace.
+    try {
+      const workspaces = ctx.workspaceRegistry?.list?.() ?? []
+      const owning = workspaces.find(workspace => Array.isArray(workspace.sessionIds)
+        && workspace.sessionIds.includes(parentId))
+      if (owning !== undefined && !owning.sessionIds.includes(sessionId)) {
+        await owning.attachSession(sessionId)
+        logLine(`attached ${sessionId} to workspace ${owning.id}`)
+      }
+    } catch (error) {
+      logLine(`attach failed for ${sessionId}: ${String(error)}`)
+    }
     // `inject()` takes a complete UserMessage, not a bare `{ content, source }`: the
     // inbox stores it verbatim and rejects a message without an id and a role.
     try {
@@ -358,21 +437,7 @@ export function apply(ctx, config) {
     } catch (error) {
       ctx.logger?.warn?.(`dsh-side: could not inject the inherited context into "${sessionId}": ${String(error)}`)
     }
-    // A seeded session keeps the permission preset recorded at event zero, which can be
-    // older than the parent's current choice. Copy the live preset so the side session
-    // does not ask for approval the main conversation already granted.
-    try {
-      const presets = ctx.permissionPresets ?? ctx.get?.('permissionPresets')
-      if (presets !== undefined && typeof presets.current === 'function' && typeof presets.set === 'function') {
-        const preset = presets.current(parentAgent.session)
-        if (typeof preset === 'string' && preset !== '' && preset !== 'custom') {
-          presets.set(agent.session, preset)
-          ctx.logger?.info?.(`dsh-side: copied permission preset "${preset}" into "${sessionId}"`)
-        }
-      }
-    } catch (error) {
-      ctx.logger?.warn?.(`dsh-side: could not copy the permission preset into "${sessionId}": ${String(error)}`)
-    }
+    await copyPermissionPreset(ctx, sessionId, agent, parentAgent, parentId)
 
   }
 

@@ -310,26 +310,39 @@ window.__ModuleLoader__.load({
           const info = typeof useTabInfo === 'function' ? useTabInfo() : undefined
           const contentId = info?.tab?.contentId
           const sessionId = sessionIdOf(contentId)
-          const resource = typeof useResource === 'function' && typeof contentId === 'string'
-            ? useResource(contentId)
-            : undefined
-          // Pin the first reference: the resource publishes a new object on every
-          // tick, and handing a new identity to SessionProvider remounts the whole
-          // conversation — which shows up as flicker, collapsed tool details and a
-          // send/stop button that never reaches the live session.
-          const pinned = React.useRef(undefined)
-          const reference = resource?.value?.reference
-          if (pinned.current === undefined && reference !== undefined) pinned.current = reference
+          // The tab holds its own reference for the whole lifetime of the panel.
+          // Reading the resource on every render handed SessionProvider a new identity
+          // (or a released one) again and again, which showed up as flicker, collapsed
+          // tool details and a stop button that never reached the live session.
+          const [retained, setRetained] = React.useState(undefined)
+          React.useEffect(() => {
+            if (typeof sessionId !== 'string' || sessionId === '') return undefined
+            let reference
+            try {
+              reference = ctx.sessions.retain(sessionId, { source: REFERENCE_SOURCE })
+            } catch (error) {
+              console.warn('[dsh-side] could not retain the side conversation for its panel:', error)
+              return undefined
+            }
+            setRetained(reference)
+            return () => {
+              try {
+                reference.release()
+              } catch (_alreadyReleased) {
+                // Releasing twice is harmless.
+              }
+            }
+          }, [sessionId])
           if (typeof renderSlot !== 'function' || typeof SessionProvider !== 'function') {
             return h(Unavailable, {
               sessionId: sessionId ?? '', note: t('fallback.note'), open: t('fallback.open'), onOpen: openInMain,
             })
           }
-          if (pinned.current === undefined) return null
+          if (retained === undefined) return null
           return h('div', {
             'data-side-chat': '',
             style: { display: 'flex', width: '100%', height: '100%', minWidth: 0, minHeight: 0 },
-          }, h(SessionProvider, { session: pinned.current }, renderSlot(CHAT_SLOT, {})))
+          }, h(SessionProvider, { session: retained }, renderSlot(CHAT_SLOT, {})))
         }
 
         /**
@@ -516,16 +529,13 @@ window.__ModuleLoader__.load({
         async function createSide(parentSessionId) {
           if (typeof parentSessionId !== 'string' || parentSessionId === '') return undefined
           const row = ctx.sessions.list.getSnapshot().byId?.[parentSessionId]
-          const workspaceId = workspaceIdOf(parentSessionId)
           let childId
           try {
             childId = await ctx.sessions.create({
               sessionId: sideSessionId(parentSessionId),
-              // A workspace names the cwd, and `create` refuses both, so the workspace
-              // wins whenever the parent has one.
-              ...(workspaceId === undefined
-                ? (typeof row?.cwd === 'string' ? { cwd: row.cwd } : {})
-                : { workspaceId }),
+              // The workspace is attached by the Host once the session exists: the
+              // browser half has no reliable way to name the parent's workspace.
+              ...(typeof row?.cwd === 'string' ? { cwd: row.cwd } : {}),
               ...(typeof row?.agentPreset === 'string' ? { agentPreset: row.agentPreset } : {}),
             })
           } catch (error) {

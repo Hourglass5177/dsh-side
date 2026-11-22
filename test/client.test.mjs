@@ -150,8 +150,8 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   await settle()
   check('creates the side session', c.calls.create.length === 1 && c.calls.fork.length === 0, c.calls.create)
   check('embeds the parent in the session id', /^session-side-parent-1-[0-9a-f]{8}$/u.test(c.calls.create[0]?.sessionId ?? ''), c.calls.create[0]?.sessionId)
-  check('joins the parent workspace', c.calls.create[0]?.workspaceId === 'ws-1', c.calls.create[0])
-  check('does not pass both workspace and cwd', c.calls.create[0]?.cwd === undefined, c.calls.create[0])
+  check('inherits the parent directory', c.calls.create[0]?.cwd === 'F:/work', c.calls.create[0])
+  check('leaves the workspace to the host', c.calls.create[0]?.workspaceId === undefined, c.calls.create[0])
   check('titles the first side session', c.calls.renamed[0] === 'dsh-side:session.title', c.calls.renamed)
   const address = c.calls.open[0]?.address
   check('opens the side panel', typeof address === 'string' && address.endsWith('/child-side-1'), address)
@@ -169,7 +169,7 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   c.commands.side.ui.run({ sessionId: 'parent-1' })
   await settle()
   check('numbers the second side session', c.calls.renamed[1] === 'dsh-side:session.title（2）', c.calls.renamed)
-  check('both join the same workspace', c.calls.create.every(call => call.workspaceId === 'ws-1'), c.calls.create)
+  check('both inherit the parent directory', c.calls.create.every(call => call.cwd === 'F:/work'), c.calls.create)
 }
 
 // --- 2. the tab renders the product's conversation, declares no custom renderer
