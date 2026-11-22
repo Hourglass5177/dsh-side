@@ -21,9 +21,9 @@ dsh-side 为 DeepSeek Harness 提供轻量、原生的临时侧边对话体验�
 ## 界面
 
 <p align="center">
-  <img src="docs/panel.png" alt="侧边会话面板：上方空白，底部为 DSH 原生输入框" height="530">
-  &nbsp;&nbsp;
   <img src="docs/start-page.png" alt="右侧边栏开始页中的「侧边会话」卡片" height="530">
+  &nbsp;&nbsp;
+  <img src="docs/panel.png" alt="侧边会话面板：上方空白，底部为 DSH 原生输入框" height="530">
 </p>
 
 <p align="center">

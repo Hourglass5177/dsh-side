@@ -21,9 +21,9 @@ The session surface reuses DSH's native components: message rows, composer, `+` 
 ## Screens
 
 <p align="center">
-  <img src="docs/panel.png" alt="A temporary side session: empty above, the built-in DSH composer below" height="530">
-  &nbsp;&nbsp;
   <img src="docs/start-page.png" alt="The Side session card on the right sidebar's start page" height="530">
+  &nbsp;&nbsp;
+  <img src="docs/panel.png" alt="A temporary side session: empty above, the built-in DSH composer below" height="530">
 </p>
 
 <p align="center">
