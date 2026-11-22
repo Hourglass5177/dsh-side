@@ -163,14 +163,17 @@ export function apply(ctx, config) {
       if (!Array.isArray(archived)) return
       for (const sessionId of archived) {
         if (inspected.has(sessionId)) continue
-        inspected.add(sessionId)
         if (typeof sessionId !== 'string' || !SAFE_SESSION_ID.test(sessionId)) continue
         let title
         try {
           title = await ctx.sessionQuery?.readTitle?.(sessionId)
         } catch (_unreadableTitle) {
+          // An unreadable title is transient: retry on the next sweep instead of
+          // remembering this id as "not a side session" forever.
           continue
         }
+        if (title === undefined) continue
+        inspected.add(sessionId)
         if (!isSideTitle(title)) continue
         await purge(ctx, sessionId, roots)
       }

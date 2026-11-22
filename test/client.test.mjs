@@ -208,6 +208,23 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   controller.abort()
 }
 
+// --- 1c. closing a placeholder tab retires the forked session
+{
+  store.clear()
+  const c = makeClient({ childId: 'child-pending-2' })
+  c.commands.side.ui.run({ sessionId: 'parent-1' })
+  await settle()
+  const address = c.calls.open[0].address
+  const provider = c.calls.resources[0]
+  const controller = new AbortController()
+  const iterator = provider.open(address, { signal: controller.signal })
+  await iterator.next()
+  c.runClose('parent-1', { contentId: address })
+  await settle()
+  check('closing a placeholder tab retires its session', c.calls.archive.some(entry => entry.sessionId === 'child-pending-2'), c.calls.archive)
+  controller.abort()
+}
+
 // --- 2. the tab renders the product's conversation, declares no custom renderer
 {
   const c = makeClient()

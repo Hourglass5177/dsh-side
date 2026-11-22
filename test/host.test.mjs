@@ -74,7 +74,21 @@ function makeCtx(options = {}) {
   await rm(root, { recursive: true, force: true })
 }
 
-// --- 3. a hostile session id never touches the filesystem
+// --- 3. an unreadable title is retried, never remembered as "not a side session"
+{
+  const root = await mkdtemp(path.join(tmpdir(), 'dsh-side-retry-'))
+  const bucket = path.join(root, '--F-retry--')
+  const sideId = 'session-33333333-4444-5555-6666-777777777777'
+  await mkdir(path.join(bucket, sideId), { recursive: true })
+  await writeFile(path.join(bucket, sideId, 'session.v4.jsonl.zstd'), 'x')
+  const ctx = makeCtx({ archived: [sideId], titles: {} })
+  mod.apply(ctx, { sessionsRoot: root, firstSweepDelayMs: 5, sweepIntervalMs: 20 })
+  await sleep(150)
+  check('keeps a session whose title is unavailable', (await readdir(bucket)).includes(sideId))
+  await rm(root, { recursive: true, force: true })
+}
+
+// --- 4. a hostile session id never touches the filesystem
 {
   const root = await mkdtemp(path.join(tmpdir(), 'dsh-side-evil-'))
   const ctx = makeCtx({ archived: ['../escape'], titles: { '../escape': '侧边会话' } })

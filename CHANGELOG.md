@@ -9,6 +9,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2]
+
+### Fixed
+
+- Closing a panel that was opened through the placeholder address now retires its
+  Session. The close handler only understood real Session addresses, so every panel
+  opened after 1.4.1 leaked its forked Session into the list.
+- Closing before the fork settles still retires the Session once it exists.
+- The reaper no longer remembers an archived Session as "not a side session" when its
+  title is momentarily unreadable; it retries on the next sweep.
+
 ## [1.4.1]
 
 ### Changed

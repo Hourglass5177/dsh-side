@@ -36,6 +36,9 @@ window.__ModuleLoader__.load({
     /** Nonce → in-flight creation, so the placeholder tab can wait for its Session. */
     const pendingSides = new Map()
 
+    /** Nonce → resolved Session id, so closing a placeholder tab can still retire it. */
+    const pendingSessions = new Map()
+
     /** Page tab type that backs the guide card; it hands off to a resource tab. */
     const PAGE_ID = 'dsh-side/new'
     const PAGE_KIND = 'sidechat-new'
@@ -239,6 +242,11 @@ window.__ModuleLoader__.load({
          */
         async function retire(sessionId) {
           forget(sessionId)
+          for (const [nonce, resolved] of pendingSessions) {
+            if (resolved !== sessionId) continue
+            pendingSessions.delete(nonce)
+            pendingSides.delete(nonce)
+          }
           const numbers = sideNumbers()
           if (numbers[sessionId] !== undefined) {
             delete numbers[sessionId]
@@ -1032,6 +1040,7 @@ window.__ModuleLoader__.load({
                   await waitForAbort(signal)
                   return
                 }
+                pendingSessions.set(nonce, childId)
                 const reference = scope.sessions.retain(childId, { source: REFERENCE_SOURCE, signal })
                 try {
                   yield { ok: true, value: { sessionId: childId, reference } }
@@ -1115,9 +1124,23 @@ window.__ModuleLoader__.load({
         ctx.effect(() => {
           try {
             return ctx.sidebarRight.registerCloseHandler(KIND, (_sessionId, tab) => {
-              const sideSessionId = sessionIdOf(tab?.contentId)
-              if (sideSessionId === undefined) return
-              void retire(sideSessionId)
+              const contentId = tab?.contentId
+              const nonce = pendingNoteOf(contentId)
+              // A panel opened while its fork was still running keeps the placeholder
+              // address forever, so the direct address alone misses it and the session
+              // would leak. Resolve the nonce instead.
+              const sideSessionId = sessionIdOf(contentId)
+                ?? (nonce === undefined ? undefined : pendingSessions.get(nonce))
+              if (typeof sideSessionId === 'string') {
+                void retire(sideSessionId)
+                return
+              }
+              if (nonce === undefined) return
+              const creation = pendingSides.get(nonce)
+              if (creation === undefined) return
+              void creation.then(childId => {
+                if (typeof childId === 'string') void retire(childId)
+              })
             })
           } catch (error) {
             console.warn('[dsh-side] close handling is unavailable:', error)
