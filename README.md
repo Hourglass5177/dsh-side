@@ -2,7 +2,7 @@
 
 **A temporary side session for DeepSeek Harness — the product's own conversation view, the current thread inherited as one context record, and the session deleted the moment you close it.**
 
-内置会话面板，零自绘 UI，约 900 行原生 JavaScript。
+复用产品自带会话面板，零自绘 UI，约 900 行原生 JavaScript。
 
 [English](README.en.md) | 中文
 
@@ -47,7 +47,7 @@ git clone https://github.com/Hourglass5177/dsh-side.git
 3. 看到 `@local/dsh-side` 出现在插件列表中即安装成功；
 4. **重启一次应用**（Host 半边需要重新加载），之后刷新页面即可使用。
 
-> 也可以用命令行安装：`dsh plugin --profile <你的 profile> add <dsh-side 的绝对路径>`。
+> Web / CLI 版可用 `dsh plugin --profile <profile> add <dsh-side 的绝对路径>` 安装；Desktop 的 `desktop` profile 由应用独占管理，请用上面的 Plugins 页面安装。
 
 卸载：在 Plugins 页面停用该行，或 `plugin_manager` 的 `remove_bundle`。
 

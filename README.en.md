@@ -47,7 +47,7 @@ Then install the local directory from the app:
 3. `@local/dsh-side` appears in the plugin list when installation succeeds;
 4. **Restart the app once** (the Host half reloads), then refresh the page.
 
-> CLI alternative: `dsh plugin --profile <your profile> add <absolute path to dsh-side>`.
+> Web / CLI builds can use `dsh plugin --profile <profile> add <absolute path to dsh-side>`; the Desktop `desktop` profile is owned by the app, so use the Plugins page there.
 
 Uninstall: disable the row in **Plugins**, or `remove_bundle`.
 
