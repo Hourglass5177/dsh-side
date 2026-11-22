@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.1]
+
+### Changed
+
+- Plugin page description shortened to one line:
+  「为 DSH 提供轻量原生体验的 /side 临时侧边会话功能」.
+
 ## [3.3.0]
 
 ### Changed
