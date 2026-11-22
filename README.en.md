@@ -1,110 +1,110 @@
-# dsh-side
+<h1 align="center">dsh-side: a temporary side session</h1>
 
-**A temporary side session for DeepSeek Harness — the product's own conversation view, the current thread inherited as one context record, and the session deleted the moment you close it.**
+<p align="center">
+  English | <a href="README.md">中文</a>
+</p>
 
-No hand-written chat UI. No dependencies. No build step. ~900 lines of plain JavaScript.
-
-English | [中文](README.md)
-
-![Tab](docs/tab.png)
+<p align="center">
+  <a href="https://github.com/Hourglass5177/dsh-side/stargazers"><img src="https://img.shields.io/github/stars/Hourglass5177/dsh-side?style=flat-square" alt="stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Hourglass5177/dsh-side?style=flat-square" alt="license"></a>
+  <img src="https://img.shields.io/badge/DeepSeek_Harness-0.2.2%2B-4b6fff?style=flat-square" alt="DeepSeek Harness 0.2.2+">
+</p>
 
 ---
 
-## What it is
+## Overview
 
-In DeepSeek Harness (DSH), `/side` opens a **temporary session** in the right sidebar:
+dsh-side gives DeepSeek Harness a lightweight, native temporary side conversation. It inherits the current conversation while its transcript starts empty; closing the tab stops the session and deletes that temporary session's record.
 
-- it **inherits the current conversation** — the model can read the thread;
-- but the transcript is **empty** — the inherited material arrives as one collapsed context record instead of a copy of the thread;
-- the surface is **the product's own** — message rows, the composer (`+`, permission, model, voice, attachments, slash commands, `@` references), the circular send button, every keyboard rule. Nothing is reimplemented;
-- closing the tab **stops it and deletes it from disk**.
+The session surface reuses DSH's native components: message rows, composer, `+` menu, permission, model selection, slash commands, `@` references, keyboard shortcuts and more — lightweight and easy to use.
 
-Built for "quick aside" questions: without polluting the main context, without adding a row to the session list, and without leaving residue behind.
+## Screens
 
-![Command](docs/command.png)
+The panel as opened: empty above, the built-in composer below.
 
-## Why it is light — and native
+<p align="center">
+  <img src="docs/panel.png" alt="A temporary side session in the right sidebar: empty above, the built-in DSH composer below" width="360">
+</p>
 
-| | |
-|---|---|
-| **Zero dependencies, zero build** | No `node_modules`, no bundler, no compile step. DSH loads `client.js` and `index.js` directly. |
-| **No reimplemented UI** | The panel renders the product's own `conversation.content`; the composer is the product's own `conversation.composer.bar`. Product updates and other plugins' composer contributions are picked up automatically. |
-| **Non-invasive** | No new event types, no changes to the main thread, no subagent catalog entries. A side session is an ordinary session. |
-| **Size** | ~590 lines client-side, ~320 lines Host-side, commented plain JavaScript. |
+The two entry points:
+
+<p align="center">
+  <img src="docs/entry.png" alt="The Side session card on the right sidebar's start page" width="300">
+  &nbsp;&nbsp;
+  <img src="docs/command.png" alt="The Side session row in the slash-command list" width="480">
+</p>
+
+## Context inheritance
+
+DSH's session fork copies the source conversation into a new session, and the chat panel displays that copied history.
+
+dsh-side uses injection: it creates a blank session and the host writes the current conversation's model-visible messages into it as one context record. The transcript stays empty while the model can read the full context.
+
+The record appears as a collapsed entry at the top of the panel; expanding it shows what was inherited.
 
 ## Install
 
-Requires DeepSeek Harness Desktop (or Web) **0.2.2+**.
+Requires DeepSeek Harness **0.2.2+** (Desktop or Web).
 
 ```bash
 git clone https://github.com/Hourglass5177/dsh-side.git
 ```
 
-Then install the local directory from the app:
+Install the local directory from the app:
 
 1. Open **Plugins**;
-2. Use **Add plugin** and pick the cloned `dsh-side` directory;
-3. `@local/dsh-side` appears in the plugin list when installation succeeds;
-4. **Restart the app once** (the Host half reloads), then refresh the page.
+2. Click **Add plugin** and select the cloned `dsh-side` directory;
+3. `@local/dsh-side` appears in the list once installed;
+4. Restart the app once (the host half reloads), then refresh the page.
 
-> Web / CLI builds can use `dsh plugin --profile <profile> add <absolute path to dsh-side>`; the Desktop `desktop` profile is owned by the app, so use the Plugins page there.
+Web / CLI builds can install from the command line:
 
-Uninstall: disable the row in **Plugins**, or `remove_bundle`.
+```bash
+dsh plugin --profile <profile> add <absolute path to dsh-side>
+```
+
+The Desktop `desktop` profile is owned by the app; use the plugin page there.
+
+Uninstall: disable the `dsh-side` row in **Plugins**.
 
 ## Usage
 
-**Entry 1 — slash command**
+Two entry points with the same result:
 
-Type `/side` in any conversation's composer and submit.
+- run **`/side`** in the composer;
+- click the **Side session** card on the right sidebar's start page (the page with Workspace files / Terminal / Browser).
 
-**Entry 2 — the right Sidebar's start page**
+Ask in the composer at the bottom; answers stream as usual. Continue asking in the same panel to keep the side session going.
 
-The sidebar's start page (the compass page with Workspace files / Terminal / Browser) gains a **Side session** card. Clicking it starts a side session beside the conversation that panel is showing.
+**Closing the tab ends it**: the side session stops, leaves every list, and its stored transcript is deleted (the whole session directory is removed).
 
-After it opens:
+## Implementation
 
-- the area above is an empty conversation (only one collapsible context record, expand it to read what was inherited);
-- the composer at the bottom is identical to the main one;
-- just ask your question there; keep asking in the same side session.
-
-**Closing the tab ends it**: the side agent stops, the session is archived out of every list, and its stored transcript is deleted (the whole session directory is removed).
-
-## How it works
-
-```
-/side
- ├─ Client  sessions.create()            a blank session (no fork seed copied into its log)
- │          rename(id, '〔side〕<parentSessionId>')
- │          open the product's conversation view in the right Sidebar
- ├─ Host    a new agent appears → read the title → parent id
- │          take the parent's model-visible messages → agent.inject(...)
- │          → one durable context record (the collapsed row in the panel)
- └─ close   archive + stop + delete that session's storage directory
-```
-
-The key constraint: the product's chat renders the session log, and a fork copies the parent's log into the child's — so "fork + official panel" can never start clean. `agent.inject()` is the one mechanism that makes content model-visible without becoming conversation rows, which is how this plugin gets all three at once.
+| | |
+|---|---|
+| **No dependencies, no build** | No npm dependencies, no bundler, no compile step; DSH loads `client.js` and `index.js` directly. |
+| **Product UI reuse** | The panel renders `conversation.content`; the composer is `conversation.composer.bar`. |
+| **Unchanged session model** | No new event types, no changes to the main conversation, no subagent catalog entries; a side session is an ordinary session. |
+| **Size** | ~590 lines browser-side, ~320 lines host-side, commented JavaScript. |
 
 ## Known limits
 
-- **Injection is asynchronous**: the Client creates and titles the session, then the Host polls for the title and injects (up to ~4 s). A message sent instantly may miss the inherited context on its first answer; the injection lands on the next step.
-- **The parent must be live**: inherited text comes from the parent agent's model-visible messages. If the parent is unloaded the panel still opens, without inherited context (the Host logs it).
-- **One context row is unavoidable**: model-visible content must be logged, and the product renders logged context.
-- **Deletion is best-effort**: if the app exits between archiving and the next sweep, the archived session is deleted on the next start.
-- Inherited context is plain text (speaker labels plus message text), without structured tool payloads.
+- **Injection is asynchronous**: the browser creates the session and writes its title, then the host reads the title and injects (up to about 4 seconds). A message sent immediately after opening may answer without the inherited context; the injection applies to the next step.
+- **The parent conversation must be online**: inherited text comes from the parent agent's model-visible messages. If the parent is unloaded, the panel still opens without inherited context and the host logs it.
+- **The context record stays at the top of the panel**: model-visible content has to be written to the session log, and the product renders that log.
+- **Deletion is best-effort**: if the app exits between archiving and the cleanup sweep, the session is deleted after the next start.
+- Inherited content is plain text (speaker labels and message text), without structured tool payloads.
 
-## Layout
+## Development
 
+```bash
+npm test
 ```
-dsh-side/
-├── client.js            # browser half: session creation, tab, title, entries
-├── index.js             # host half: context injection + post-close cleanup
-├── cordis.patch.yml     # plugin row declaration
-├── package.json         # dsh.bundle / dsh.client manifest
-├── locale/{en,zh}.json  # plugin page title and description
-├── icon.svg             # plugin icon (same mark as the tab)
-└── docs/                # screenshots
-```
+
+Two dependency-free scripts: `test/client.test.mjs` drives the browser half with a simulated module loader and Cordis context, and `test/host.test.mjs` drives the host half with a simulated host context against a real temporary directory.
+
+Conventions are in [CONTRIBUTING.md](CONTRIBUTING.md); releases are in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-MIT.
+[MIT](LICENSE)

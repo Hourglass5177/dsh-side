@@ -1,0 +1,231 @@
+/**
+ * Browser-half test: drives the Client plugin with a fake module loader and a fake
+ * Cordis context. Run with `node test/client.test.mjs` (also part of `npm test`).
+ */
+const CLIENT = new URL('../client.js', import.meta.url)
+
+const results = []
+function check(name, condition, detail) {
+  results.push({ name, ok: Boolean(condition), detail })
+}
+
+const store = new Map()
+let moduleExports
+
+globalThis.window = {
+  localStorage: {
+    getItem: key => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => { store.set(key, String(value)) },
+    removeItem: key => { store.delete(key) },
+  },
+  __ModuleLoader__: {
+    load({ id, factory }) {
+      results.push({ name: 'loader id is the package name', ok: id === '@local/dsh-side', detail: id })
+      moduleExports = factory(name => {
+        if (name !== 'react') throw new Error(`unexpected require ${name}`)
+        return {
+          createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+          Fragment: 'fragment',
+          useState: value => [value, () => {}],
+          useMemo: fn => fn(),
+          useCallback: fn => fn,
+          useEffect: () => {},
+          useRef: value => ({ current: value }),
+          useSyncExternalStore: (_s, get) => get(),
+        }
+      })
+    },
+  },
+}
+
+await import(CLIENT.href)
+check('registers a module', moduleExports !== undefined)
+for (const service of ['sessions', 'sidebarRight', 'uiWorkspace', 'commandUi', 'slots', 'locale']) {
+  check(`injects ${service}`, moduleExports?.inject?.includes(service), moduleExports?.inject)
+}
+check('no test seam for hand-written UI', moduleExports?.__internal === undefined)
+
+const live = []
+function disposeLive() {
+  for (const client of live.splice(0)) {
+    for (const dispose of client.effects) { try { dispose?.() } catch {} }
+  }
+}
+
+function makeClient(options = {}) {
+  const calls = {
+    create: [], fork: [], open: [], archive: [], renamed: [], registrations: [],
+    slotInjects: [], injected: [], resources: [], tabs: [], archived: [],
+  }
+  const effects = []
+  const commands = {}
+  let closeHandler
+
+  const locale = {
+    register() { return () => {} },
+    bind(namespace) { return key => `${namespace}:${key}` },
+  }
+
+  const sessions = {
+    list: { getSnapshot: () => ({ byId: { 'parent-1': { workspaceId: 'ws-1', cwd: 'F:/work' } } }) },
+    async create(opts) {
+      calls.create.push(opts)
+      if (options.createThrows) throw new Error('create failed')
+      return options.childId ?? 'child-side-1'
+    },
+    async fork(request) { calls.fork.push(request); return 'forked-1' },
+    retain(target, opts) {
+      calls.retained = { target, opts }
+      return { release: () => { calls.released = true } }
+    },
+    scope: sessionId => ({ sessionId }),
+    sessionOf: () => ({
+      async rename(title) { calls.renamed.push(title); return { ok: true, value: { title, seq: 1 } } },
+    }),
+  }
+
+  const scope = {
+    sessions,
+    resources: { register(provider) { calls.resources.push(provider); return () => {} } },
+    sidebarRightTabs: { register(definition) { calls.tabs.push(definition); return () => {} } },
+    slots: {
+      inject(name, cb) { calls.slotInjects.push(name); effects.push(cb()); return () => {} },
+      register(definition) {
+        if (options.rejectSlots === true) throw new Error('duplicate declaration')
+        calls.registrations.push(definition)
+        return () => {}
+      },
+    },
+    effect(fn) { effects.push(fn()); return () => {} },
+  }
+
+  const ctx = {
+    effects,
+    locale,
+    sessions,
+    slots: scope.slots,
+    inject(deps, callback) { calls.injected.push([...deps]); callback(scope); return () => {} },
+    effect(fn) { effects.push(fn()); return () => {} },
+    get(name) {
+      if (name !== 'workspaces') return undefined
+      return { list: { getSnapshot: () => ({ items: [{ workspaceId: 'ws-1', sessionIds: ['parent-1'] }, { workspaceId: 'ws-2', sessionIds: [] }] }) } }
+    },
+    commandUi: { register(contribution) { commands[contribution.name] = contribution; return () => {} } },
+    sidebarRight: {
+      openResource(address, opts) {
+        if (options.openThrows) throw new Error('no surface')
+        calls.open.push({ address, opts })
+      },
+      openTabs: { getSnapshot: () => options.openTabs ?? [] },
+      registerCloseHandler(kind, handler) { calls.closeKind = kind; closeHandler = handler; return () => {} },
+    },
+    uiWorkspace: {
+      async archiveSession(sessionId, archOpts) { calls.archive.push({ sessionId, opts: archOpts }) },
+      openSession(sessionId) { calls.openedInMain = sessionId },
+    },
+  }
+  moduleExports.apply(ctx)
+  const client = { calls, commands, effects, runClose: (parentId, tab) => closeHandler?.(parentId, tab) }
+  live.push(client)
+  return client
+}
+
+const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
+
+// --- 1. /side creates a blank session, titles it with the parent id, opens the panel
+{
+  store.clear()
+  const c = makeClient()
+  const command = c.commands.side
+  check('/side is registered', command !== undefined)
+  check('command is a bare action', command?.ui?.kind === 'action', command?.ui)
+  check('label is localized', command?.label?.() === 'dsh-side:command.label', command?.label?.())
+  check('command row carries the mark', typeof command?.icon === 'function', command?.icon)
+
+  command.ui.run({ sessionId: 'parent-1' })
+  await settle()
+  check('creates a Session instead of forking', c.calls.create.length === 1 && c.calls.fork.length === 0, c.calls.create)
+  check('joins the parent workspace', c.calls.create[0]?.workspaceId === 'ws-1', c.calls.create[0])
+  check('inherits the directory', c.calls.create[0]?.cwd === 'F:/work', c.calls.create[0])
+  check('titles the side session with its parent', c.calls.renamed[0] === '〔side〕parent-1', c.calls.renamed)
+  const address = c.calls.open[0]?.address
+  check('opens the side panel', typeof address === 'string' && address.endsWith('/child-side-1'), address)
+  check('opens the sidechat kind', c.calls.open[0]?.opts?.kind === 'sidechat', c.calls.open[0]?.opts)
+  check('remembers the child for cleanup', JSON.parse(store.get('dsh-side.sessions.v1') ?? '[]').includes('child-side-1'))
+}
+
+// --- 2. the tab renders the product's conversation, declares no custom renderer
+{
+  const c = makeClient()
+  const body = c.calls.registrations.find(r => r.name === 'sidebar.right.pane.tab')
+  check('tab body declares only its conversation child', JSON.stringify(Object.keys(body?.children ?? {})) === '["side.chat.conversation"]', body?.children)
+  const title = c.calls.registrations.find(r => r.name === 'sidebar.right.pane.tab.title')
+  check('registers the chip title component', title?.key === '@local/dsh-side/chat', title)
+  check('no Conversation target is registered', !c.calls.injected.some(deps => deps.includes('uiConversation')), c.calls.injected)
+  check('content seat registered', c.calls.registrations.some(r => r.name === 'side.chat.conversation'))
+  const tab = c.calls.tabs[0]
+  check('tab type still opens our addresses', tab?.canOpen('dsh-resource://sidechat/session/x') === true)
+}
+
+// --- 2b. the start page carries our card and its page type
+{
+  const c = makeClient()
+  const page = c.calls.tabs.find(tab => tab.kind === 'sidechat-new')
+  check('registers a guide page type', page !== undefined, c.calls.tabs.map(t => t.kind))
+  check('declares one guide entry', Array.isArray(page?.guide) && page.guide.length === 1, page?.guide)
+  check('guide entry carries copy', typeof page?.guide?.[0]?.title === 'function' && typeof page?.guide?.[0]?.description === 'function')
+  check('guide entry has an order', Number.isSafeInteger(page?.guide?.[0]?.order), page?.guide?.[0])
+  check('guide entry carries the mark', typeof page?.guide?.[0]?.icon === 'function', page?.guide?.[0]?.icon)
+  check('each card opens its own page', page?.multiple === true, page?.multiple)
+  const pageBody = c.calls.registrations.find(r => r.key === '@local/dsh-side/new')
+  check('registers the guide page body', pageBody !== undefined, c.calls.registrations.map(r => r.key))
+}
+
+// --- 3. closing stops and archives, and forgets the record
+{
+  store.clear()
+  const c = makeClient()
+  c.commands.side.ui.run({ sessionId: 'parent-1' })
+  await settle()
+  c.runClose('parent-1', { contentId: 'dsh-resource://sidechat/session/child-side-1' })
+  await settle()
+  check('close archives with stopActivity', c.calls.archive[0]?.sessionId === 'child-side-1'
+    && c.calls.archive[0]?.opts?.stopActivity === true, c.calls.archive[0])
+  check('closed session is forgotten', !JSON.parse(store.get('dsh-side.sessions.v1') ?? '[]').includes('child-side-1'))
+}
+
+// --- 4. failures are contained
+{
+  const failing = makeClient({ createThrows: true })
+  let threw = false
+  try { failing.commands.side.ui.run({ sessionId: 'parent-1' }); await settle() } catch { threw = true }
+  check('create failure does not throw', threw === false)
+  check('create failure opens nothing', failing.calls.open.length === 0)
+
+  const noSurface = makeClient({ openThrows: true })
+  noSurface.commands.side.ui.run({ sessionId: 'parent-1' })
+  await settle()
+  check('panel failure archives the orphan', noSurface.calls.archive[0]?.sessionId === 'child-side-1', noSurface.calls.archive)
+
+  const rejected = makeClient({ rejectSlots: true })
+  check('command survives a rejected slot seat', rejected.commands.side !== undefined)
+  check('tab types survive a rejected slot seat', rejected.calls.tabs.length === 2, rejected.calls.tabs.map(t => t.kind))
+}
+
+disposeLive()
+
+// --- 5. reload reconciliation archives sessions with no open tab
+{
+  store.clear()
+  store.set('dsh-side.sessions.v1', JSON.stringify(['orphan-1', 'kept-1']))
+  const c = makeClient({ openTabs: [{ contentId: 'dsh-resource://sidechat/session/kept-1' }] })
+  await new Promise(resolve => setTimeout(resolve, 2800))
+  const archived = c.calls.archive.map(entry => entry.sessionId)
+  check('archives the orphaned side session', archived.includes('orphan-1'), archived)
+  check('keeps the one whose tab is open', !archived.includes('kept-1'), archived)
+}
+
+const failed = results.filter(r => !r.ok)
+for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.ok ? '' : `  -> ${JSON.stringify(r.detail)}`}`)
+console.log(`\n${results.length - failed.length}/${results.length} passed`)
+process.exitCode = failed.length === 0 ? 0 : 1

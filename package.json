@@ -1,10 +1,28 @@
 {
   "name": "@local/dsh-side",
-  "version": "3.1.2",
+  "version": "3.2.0",
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "A temporary side session beside the current thread: the product conversation view and composer, the parent thread inherited as one context record, and the session deleted when you close it.",
+  "description": "A temporary side session for DeepSeek Harness: the product's own conversation view, the current thread inherited as one context record, and the session deleted when you close it.",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "side-chat",
+    "temporary-session"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hourglass5177/dsh-side.git"
+  },
+  "homepage": "https://github.com/Hourglass5177/dsh-side#readme",
+  "bugs": {
+    "url": "https://github.com/Hourglass5177/dsh-side/issues"
+  },
+  "scripts": {
+    "test": "node test/client.test.mjs && node test/host.test.mjs"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -19,6 +37,7 @@
     "locale/*.json",
     "icon.svg",
     "README.md",
+    "README.en.md",
     "LICENSE"
   ],
   "dsh": {

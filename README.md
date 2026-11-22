@@ -1,110 +1,113 @@
-# dsh-side
+<h1 align="center">dsh-side：临时侧边会话</h1>
 
-**A temporary side session for DeepSeek Harness — the product's own conversation view, the current thread inherited as one context record, and the session deleted the moment you close it.**
+<p align="center">
+  中文 | <a href="README.en.md">English</a>
+</p>
 
-复用产品自带会话面板，零自绘 UI，约 900 行原生 JavaScript。
-
-[English](README.en.md) | 中文
-
-![标签页](docs/tab.png)
+<p align="center">
+  <a href="https://github.com/Hourglass5177/dsh-side/stargazers"><img src="https://img.shields.io/github/stars/Hourglass5177/dsh-side?style=flat-square" alt="stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Hourglass5177/dsh-side?style=flat-square" alt="license"></a>
+  <img src="https://img.shields.io/badge/DeepSeek_Harness-0.2.2%2B-4b6fff?style=flat-square" alt="DeepSeek Harness 0.2.2+">
+</p>
 
 ---
 
-## 是什么
+## 简介
 
-在 DeepSeek Harness（DSH）里，`/side` 会在右侧边栏开一条**临时会话**：
+dsh-side 为 DeepSeek Harness 提供轻量、原生的临时侧边对话体验。它继承当前对话的内容，面板从空白开始；关闭标签页后会话停止运行，并删除该临时会话记录。
 
-- 它**继承当前对话**——模型能读到主对话的内容；
-- 但对话区是**空的**——继承材料作为一条可折叠的上下文记录存在，不会把主对话抄一遍；
-- 界面**完全是产品自带**的——消息行、输入区（`+`、权限、模型、语音、附件、斜杠命令、`@` 引用）、圆形发送键、全部快捷键，一行都没有重写；
-- 关掉标签页**立即停止并从磁盘删除**该会话。
+会话界面复用 DSH 原生组件：消息行、输入框、`+` 菜单、权限、模型选择、斜杠命令、`@` 引用与快捷键等，轻量、易用。
 
-适合"问一句就走"的旁支问题：不想污染主对话的上下文、不想让它出现在会话列表里、也不想留下垃圾。
+## 界面
 
-![命令](docs/command.png)
+打开后的面板如下：上方空白，底部为原生输入框。
 
-## 为什么是"轻量 + 原生"
+<p align="center">
+  <img src="docs/panel.png" alt="右侧边栏中的临时侧边会话：上方空白，底部为 DSH 自带输入框" width="360">
+</p>
 
-| | |
-|---|---|
-| **零依赖、零构建** | 没有 `node_modules`、没有打包器、没有编译步骤。`client.js` + `index.js` 两个文件直接由 DSH 加载。 |
-| **不重写任何 UI** | 面板渲染的是产品自己的 `conversation.content`；输入区是产品自己的 `conversation.composer.bar`。产品升级、别的插件改造对话框，这里**自动跟随**。 |
-| **不侵入会话模型** | 不新增事件类型、不改主对话、不写子代理目录。会话就是一个普通会话。 |
-| **代码量** | 客户端 ~590 行、Host ~320 行，全部是带注释的注释级原生 JS。 |
+两个进入入口：
+
+<p align="center">
+  <img src="docs/entry.png" alt="右侧边栏开始页中的「侧边会话」卡片" width="300">
+    
+  <img src="docs/command.png" alt="斜杠命令列表中的「侧边会话 side」" width="480">
+</p>
+
+## 上下文继承
+
+DSH 的会话分叉会将源会话的历史复制进新会话，聊天面板随之展示这部分历史。
+
+dsh-side 采用注入方式：新建一个空白会话，由宿主读取当前对话的模型可见消息，作为一条上下文记录写入该会话。面板因此保持空白，模型仍可读取完整上下文。
+
+该记录以折叠条目显示在面板顶部，展开可查看继承的具体内容。
 
 ## 安装
 
-需要 DeepSeek Harness Desktop（或 Web 版）**0.2.2 及以上**。
+需要 DeepSeek Harness **0.2.2 及以上**（Desktop 或 Web 版）。
 
 ```bash
 git clone https://github.com/Hourglass5177/dsh-side.git
 ```
 
-然后在应用里安装本地目录：
+在应用中安装本地目录：
 
 1. 打开 **Plugins** 页面；
-2. 用 **Add plugin**（添加插件）选择刚克隆的 `dsh-side` 目录；
-3. 看到 `@local/dsh-side` 出现在插件列表中即安装成功；
-4. **重启一次应用**（Host 半边需要重新加载），之后刷新页面即可使用。
+2. 点 **Add plugin**，选择克隆得到的 `dsh-side` 目录；
+3. 列表中显示 `@local/dsh-side` 即安装完成；
+4. 重启一次应用（宿主半边需要重新加载），之后刷新页面即可使用。
 
-> Web / CLI 版可用 `dsh plugin --profile <profile> add <dsh-side 的绝对路径>` 安装；Desktop 的 `desktop` profile 由应用独占管理，请用上面的 Plugins 页面安装。
+Web / CLI 版可通过命令行安装：
 
-卸载：在 Plugins 页面停用该行，或 `plugin_manager` 的 `remove_bundle`。
+```bash
+dsh plugin --profile <profile> add <dsh-side 的绝对路径>
+```
+
+Desktop 的 `desktop` profile 由应用独占管理，请在插件页面中安装。
+
+卸载：在 Plugins 中停用 `dsh-side` 一行。
 
 ## 使用
 
-**入口一：斜杠命令**
+两个入口，效果一致：
 
-在任意对话的输入框里输入 `/side` 并回车。
+- 在输入框执行 **`/side`**；
+- 在右侧边栏开始页（含「工作区文件 / 新建终端 / 浏览器」的页面）点击 **侧边会话** 卡片。
 
-**入口二：右侧栏「开始」页**
+面板打开后即可在底部输入框提问，回答按常规方式流式输出。继续在同一面板提问即可延续该会话。
 
-右侧边栏的起始页（指南针页，含工作区文件 / 终端 / 浏览器）会多出一张 **侧边会话** 卡片，点它即在当前会话旁开一条。
+**关闭标签页即结束**：侧边会话停止运行，从所有列表移除，并删除其磁盘记录（对应会话目录整体删除）。
 
-打开后：
+## 实现要点
 
-- 上方是空白的会话区（只有一条可折叠的上下文记录，展开可看到继承的内容）；
-- 底部是与主对话完全一致的输入框；
-- 直接在底部提问即可；想继续追问就在同一条侧边会话里继续。
+|              |                                                                |
+| ------------ | -------------------------------------------------------------- |
+| **零依赖、零构建**  | 不引入 npm 依赖，无打包与编译步骤；DSH 直接加载 `client.js` 与 `index.js`。         |
+| **界面复用官方组件** | 面板使用 `conversation.content`，输入区使用 `conversation.composer.bar`。 |
+| **不修改会话模型**  | 未新增事件类型，未改动主对话，未写入子代理目录；侧边会话即普通会话。                             |
+| **代码规模**     | 浏览器侧约 590 行，宿主侧约 320 行，均为带注释的 JavaScript。                      |
 
-**关闭标签页 = 结束**：立即停止侧边会话、归档出所有列表，并删除它自己的会话记录（磁盘上的 `<会话目录>` 整个删除）。
+## 已知限制
 
-## 工作原理
+- **注入为异步过程**：浏览器创建会话并写入标题，宿主读取标题后注入（最长约 4 秒）。打开面板后立即发送消息时，首条回答可能尚未获得继承内容，注入将作用于下一个步骤。
+- **要求主对话在线**：继承内容来自主对话代理的模型可见消息。主对话已卸载时，面板仍可打开，但无继承内容，宿主会输出一条日志。
+- **上下文记录保留在面板顶部**：模型可见的内容需要写入会话日志，产品会渲染该日志。
+- **删除为尽力而为**：若应用在「已归档、尚未执行清理」之间退出，该会话将在下次启动后的首轮清理中删除。
+- 继承内容为纯文本（说话人标签与消息正文），不含工具调用的结构化载荷。
 
-```
-/side
- ├─ 客户端  sessions.create()            新建一个空白会话（不是 fork，日志里没有抄来的历史）
- │          rename(id, '〔side〕<父会话id>')
- │          右侧栏打开产品自带的会话视图
- ├─ Host    看到新会话 → 从标题取父会话 id
- │          取父会话的模型可见消息 → agent.inject(...)
- │          → 一条持久化的上下文记录（面板上就是那条折叠行）
- └─ 关闭    归档 + 停止 + 删除该会话的存储目录
-```
+## 开发与测试
 
-关键点：**官方聊天面板渲染的就是会话日志**，而 fork 的 seed 会把父日志复制进子日志，所以「用 fork + 官方面板」必然显示整段历史。`agent.inject()` 是唯一能让内容对模型可见、却不变成对话行的机制——这就是本插件能同时做到「官方面板 + 真继承 + 空白面板」的原因。
-
-## 已知边界
-
-- **注入是异步的**：客户端建会话并写标题，Host 轮询到标题后注入（最多约 4 秒）。面板一开就立刻发消息时，首条回答可能还没拿到继承内容；注入会落在下一步。
-- **父会话需在线**：继承内容来自父代理的模型可见消息；父会话已卸载时，面板仍会打开，只是没有继承内容（Host 会打日志）。
-- **一条 context 行不可避免**：模型可见的内容必须落日志，产品会渲染日志——那条折叠行是最小可见痕迹。
-- **删除是尽力而为**：应用在"归档后、下一轮清理前"退出时，该会话会在下次启动后的第一轮清理里删除。
-- 继承内容是纯文本（说话人标签 + 消息正文），不含工具调用的结构化载荷。
-
-## 目录结构
-
-```
-dsh-side/
-├── client.js            # 浏览器半边：创建会话、标签页、标题、入口
-├── index.js             # Host 半边：继承注入 + 关闭后回收
-├── cordis.patch.yml     # 插件行声明
-├── package.json         # dsh.bundle / dsh.client 清单
-├── locale/{en,zh}.json  # 插件页标题与说明
-├── icon.svg             # 插件图标（与标签页同一个标识）
-└── docs/                # 截图
+```bash
+npm test
 ```
 
-## 许可证
+两个零依赖测试脚本：
 
-MIT。
+- `test/client.test.mjs` 以模拟的模块加载器与 Cordis 上下文驱动浏览器半边：创建会话、写入标题、注册标签、关闭归档、失败兜底；
+- `test/host.test.mjs` 以模拟的宿主上下文与真实临时目录驱动宿主半边：上下文注入、关闭后清理。
+
+改动约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 许可
+
+[MIT](LICENSE)

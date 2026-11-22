@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in the side panel does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please include the DSH version and, if the panel misbehaves, a screenshot.
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH version
+      description: From the app's About / Plugins page, for example `0.2.2-rc.3`.
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: dsh-side version
+      description: Shown next to `@local/dsh-side` in Plugins, or the git commit you installed.
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Console lines starting with `[dsh-side]` are especially useful.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a conversation
+        2. Run /side
+        3. Ask a question
+        4. ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Drag images here, or paste any error output.
