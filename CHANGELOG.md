@@ -1,5 +1,10 @@
 # Changelog
 
+> **Version scheme reset.** From this entry on the project follows a small, stable
+> version line: base `1.1.0`, and each fix advances at most `+0.0.1`. Earlier `3.x`
+> numbers were an accumulation of experiment rounds and are kept below only as history.
+
+
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
