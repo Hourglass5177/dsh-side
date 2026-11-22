@@ -76,7 +76,7 @@ Two entry points with the same result:
 
 Ask in the composer at the bottom; answers stream as usual. Continue asking in the same panel to keep the side session going.
 
-The side session joins the workspace of the conversation it was started from, titled 「Side session」, then 「Side session（2）」, 「Side session（3）」 for the next ones in the same workspace.
+The side session joins the workspace of the conversation it was started from, titled 「Side session」, then 「Side session（2）」, 「Side session（3）」 for the ones still open. Numbers follow the sessions that exist, so deleting one frees its number for the next panel.
 
 **Closing the tab ends it**: the side session stops and its stored transcript is deleted (the whole session directory is removed).
 

@@ -52,8 +52,8 @@ window.__ModuleLoader__.load({
     /** Record of live side Sessions, so a crash or reload cannot leak them. */
     const STORAGE_KEY = 'dsh-side.sessions.v1'
 
-    /** Monotonic counter behind 「侧边会话（2）」 titles. */
-    const TITLE_COUNTER_KEY = 'dsh-side.title-counter.v1'
+    /** Session id → the number used in its 「侧边会话（n）」 title. */
+    const SIDE_TITLES_KEY = 'dsh-side.titles.v1'
 
     /** Wait before reconciling orphans; the Sidebar restores tabs during boot. */
     const RECONCILE_DELAY_MS = 2500
@@ -209,6 +209,11 @@ window.__ModuleLoader__.load({
          */
         async function retire(sessionId) {
           forget(sessionId)
+          const numbers = sideNumbers()
+          if (numbers[sessionId] !== undefined) {
+            delete numbers[sessionId]
+            saveSideNumbers(numbers)
+          }
           try {
             await ctx.uiWorkspace.archiveSession(sessionId, { stopActivity: true })
           } catch (error) {
@@ -483,27 +488,51 @@ window.__ModuleLoader__.load({
         }
 
         /**
-         * Next title for a side session: 「侧边会话」, then 「侧边会话（2）」 and so on.
-         * The counter is per browser, monotonic, and never reused after a deletion, so
-         * two open panels can never share a title.
-         * @returns {string} the title to write.
+         * @returns {Record<string, number>} remembered session id → title number.
          */
-        function nextSideTitle() {
-          let used = 0
+        function sideNumbers() {
           try {
-            const parsed = Number.parseInt(window.localStorage.getItem(TITLE_COUNTER_KEY) ?? '0', 10)
-            used = Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0
+            const parsed = JSON.parse(window.localStorage.getItem(SIDE_TITLES_KEY) ?? '{}')
+            return parsed !== null && typeof parsed === 'object' ? parsed : {}
           } catch (_unavailableStorage) {
-            used = 0
+            return {}
           }
-          const next = used + 1
+        }
+
+        /**
+         * @param {Record<string, number>} numbers - map to persist.
+         */
+        function saveSideNumbers(numbers) {
           try {
-            window.localStorage.setItem(TITLE_COUNTER_KEY, String(next))
+            window.localStorage.setItem(SIDE_TITLES_KEY, JSON.stringify(numbers))
           } catch (_unavailableStorage) {
-            // A lost counter at worst repeats a number; the panel still works.
+            // Losing the map at worst repeats a number; the panel still works.
           }
+        }
+
+        /**
+         * Next free number, derived from the side sessions that still exist. Deleting a
+         * side session frees its number, so a fresh panel reuses it instead of counting
+         * up forever.
+         * @returns {number} the number to use.
+         */
+        function nextSideNumber() {
+          const known = ctx.sessions.list.getSnapshot().byId ?? {}
+          let highest = 0
+          for (const [sessionId, number] of Object.entries(sideNumbers())) {
+            if (known[sessionId] === undefined) continue
+            if (Number.isSafeInteger(number) && number > highest) highest = number
+          }
+          return highest + 1
+        }
+
+        /**
+         * @param {number} number - the session's number.
+         * @returns {string} 「侧边会话」 or 「侧边会话（n）」.
+         */
+        function sideTitle(number) {
           const base = t('session.title')
-          return next === 1 ? base : `${base}（${next}）`
+          return number === 1 ? base : `${base}（${number}）`
         }
 
         /**
@@ -538,7 +567,9 @@ window.__ModuleLoader__.load({
             return undefined
           }
           remember(childId)
-          await renameSideSession(childId, nextSideTitle())
+          const number = nextSideNumber()
+          await renameSideSession(childId, sideTitle(number))
+          saveSideNumbers({ ...sideNumbers(), [childId]: number })
           return childId
         }
 

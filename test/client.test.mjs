@@ -66,12 +66,15 @@ function makeClient(options = {}) {
     bind(namespace) { return key => `${namespace}:${key}` },
   }
 
+  const byId = { 'parent-1': { workspaceId: 'ws-1', cwd: 'F:/work' } }
   const sessions = {
-    list: { getSnapshot: () => ({ byId: { 'parent-1': { workspaceId: 'ws-1', cwd: 'F:/work' } } }) },
+    list: { getSnapshot: () => ({ byId }) },
     async create(opts) {
       calls.create.push(opts)
       if (options.createThrows) throw new Error('create failed')
-      return options.childId ?? 'child-side-1'
+      const childId = options.childIds !== undefined ? options.childIds.shift() : (options.childId ?? 'child-side-1')
+      byId[childId] = { cwd: 'F:/work', blank: true }
+      return childId
     },
     async fork(request) {
       calls.fork.push(request)
@@ -160,16 +163,24 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   check('does not archive the new session', c.calls.archive.length === 0, c.calls.archive)
 }
 
-// --- 1b. a second side session is numbered
+// --- 1b. numbering follows the side sessions that still exist
 {
   store.clear()
-  const c = makeClient()
-  c.commands.side.ui.run({ sessionId: 'parent-1' })
+  const client = makeClient({ childIds: ['child-a-1', 'child-b-2'] })
+  client.commands.side.ui.run({ sessionId: 'parent-1' })
   await settle()
-  c.commands.side.ui.run({ sessionId: 'parent-1' })
+  client.commands.side.ui.run({ sessionId: 'parent-1' })
   await settle()
-  check('numbers the second side session', c.calls.renamed[1] === 'dsh-side:session.title（2）', c.calls.renamed)
-  check('both inherit the parent directory', c.calls.create.every(call => call.cwd === 'F:/work'), c.calls.create)
+  check('numbers the second side session', client.calls.renamed[1] === 'dsh-side:session.title（2）', client.calls.renamed)
+  check('both inherit the parent directory', client.calls.create.every(call => call.cwd === 'F:/work'), client.calls.create)
+
+  // Deleting the first frees its number: the next panel takes it again.
+  disposeLive()
+  store.clear()
+  const reopened = makeClient({ childId: 'child-c-3' })
+  reopened.commands.side.ui.run({ sessionId: 'parent-1' })
+  await settle()
+  check('starts again at 1 after a deletion', reopened.calls.renamed[0] === 'dsh-side:session.title', reopened.calls.renamed)
 }
 
 // --- 2. the tab renders the product's conversation, declares no custom renderer

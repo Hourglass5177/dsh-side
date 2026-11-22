@@ -9,6 +9,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3]
+
+### Changed
+
+- Side session numbers follow the sessions that still exist instead of a counter that
+  only ever grows. Deleting 「侧边会话」 makes the next panel take that number again.
+
 ## [1.2.2]
 
 ### Fixed
