@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.1]
+
+### Fixed
+
+- Hiding a side session no longer archives it. The controller refuses an archived
+  Session every model step, which ended each turn as `blocked` in about a second and
+  also made the context injection fail. The Host now detaches the session from its
+  workspace instead: it leaves the session list while it keeps running.
+
 ## [3.4.0]
 
 ### Fixed

@@ -38,7 +38,10 @@ function makeCtx(options = {}) {
       return () => {}
     },
     emitCreated(agent) { createdHandler?.(agent) },
-    workspaceRegistry: { get archivedSessionIds() { return options.archived ?? [] } },
+    workspaceRegistry: {
+      get archivedSessionIds() { return options.archived ?? [] },
+      list() { return options.workspaces ?? [] },
+    },
     sessionQuery: {
       async readTitle(sessionId) {
         const title = options.titles?.[sessionId]
@@ -125,7 +128,28 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
   check('warns about the empty parent', empty.calls.warns.some(m => m.includes('no visible messages')), empty.calls.warns)
 }
 
-// --- 5. the parent's live permission preset is copied to the child
+// --- 5. the side session is detached from its workspace so it leaves the lists
+{
+  const detached = []
+  const workspace = {
+    sessionIds: ['child-detach-1'],
+    async detachSession(id) { detached.push(id) },
+  }
+  const child = { session: { header: { id: 'child-detach-1' } }, async inject() {} }
+  const parent = { session: { deriveMessages: () => PARENT_MESSAGES } }
+  const ctx = makeCtx({
+    titles: { 'child-detach-1': '〔side〕parent-detach' },
+    parents: { 'parent-detach': parent },
+    workspaces: [workspace],
+  })
+  mod.apply(ctx, fast)
+  ctx.emitCreated(child)
+  await sleep(120)
+  check('detaches the side session from its workspace', detached.length === 1 && detached[0] === 'child-detach-1', detached)
+  check('still injects the inherited context', ctx.calls.infos.some(m => m.includes('inherited')), ctx.calls.infos)
+}
+
+// --- 6. the parent's live permission preset is copied to the child
 {
   const applied = []
   const child = { session: { header: { id: 'child-perm-1' } }, async inject() {} }
@@ -151,7 +175,7 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
   check('never writes the custom state', !applied.includes('unexpected'), applied)
 }
 
-// --- 6. reaper still purges a closed side conversation
+// --- 7. reaper still purges a closed side conversation
 {
   const root = await mkdtemp(path.join(tmpdir(), 'dsh-side-reap-'))
   const bucket = path.join(root, '--F-test-bucket--')

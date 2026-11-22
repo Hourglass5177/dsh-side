@@ -256,24 +256,6 @@ window.__ModuleLoader__.load({
           await renameSideSession(sessionId, `${SIDE_MARK}${parentSessionId}`)
         }
 
-        /**
-         * Hide a live side Session from every list without stopping it.
-         *
-         * The session stays alive for its sidebar tab; archiving only removes it from
-         * the workspace views, which is what keeps a temporary conversation out of the
-         * session list. The Host reaper ignores it until the title becomes
-         * `〔side-closed〕`.
-         *
-         * @param {string} sessionId - the new side Session.
-         */
-        async function hideFromLists(sessionId) {
-          try {
-            await ctx.uiWorkspace.archiveSession(sessionId)
-          } catch (error) {
-            console.warn('[dsh-side] could not hide the side conversation from the lists:', error)
-          }
-        }
-
         /** @param {string} sessionId - side Session. */
         function openInMain(sessionId) {
           try {
@@ -487,7 +469,6 @@ window.__ModuleLoader__.load({
           }
           remember(childId)
           await markSideSession(childId, parentSessionId)
-          await hideFromLists(childId)
           return childId
         }
 

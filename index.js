@@ -277,6 +277,21 @@ export function apply(ctx, config) {
     } catch (error) {
       ctx.logger?.warn?.(`dsh-side: could not inject the inherited context into "${sessionId}": ${String(error)}`)
     }
+    // Keep the temporary conversation out of the session list without archiving it:
+    // an archived Session is refused a model step by the controller's gate. Detaching
+    // removes it from the workspace account, and the session keeps running for its tab.
+    try {
+      const workspaces = ctx.workspaceRegistry?.list?.() ?? []
+      for (const workspace of workspaces) {
+        if (Array.isArray(workspace.sessionIds) && workspace.sessionIds.includes(sessionId)) {
+          await workspace.detachSession(sessionId)
+          ctx.logger?.info?.(`dsh-side: detached side conversation "${sessionId}" from its workspace`)
+          break
+        }
+      }
+    } catch (error) {
+      ctx.logger?.warn?.(`dsh-side: could not detach "${sessionId}" from its workspace: ${String(error)}`)
+    }
     // A seeded session keeps the permission preset recorded at event zero, which can be
     // older than the parent's current choice. Copy the live preset so the side session
     // does not ask for approval the main conversation already granted.

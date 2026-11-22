@@ -156,8 +156,7 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   check('opens the side panel', typeof address === 'string' && address.endsWith('/child-side-1'), address)
   check('opens the sidechat kind', c.calls.open[0]?.opts?.kind === 'sidechat', c.calls.open[0]?.opts)
   check('remembers the child for cleanup', JSON.parse(store.get('dsh-side.sessions.v1') ?? '[]').includes('child-side-1'))
-  check('hides it from the lists without stopping it', c.calls.archive[0]?.sessionId === 'child-side-1'
-    && c.calls.archive[0]?.opts?.stopActivity === undefined, c.calls.archive[0])
+  check('does not archive the new session', c.calls.archive.length === 0, c.calls.archive)
 }
 
 // --- 2. the tab renders the product's conversation, declares no custom renderer

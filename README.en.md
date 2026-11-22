@@ -76,7 +76,7 @@ Two entry points with the same result:
 
 Ask in the composer at the bottom; answers stream as usual. Continue asking in the same panel to keep the side session going.
 
-The side session never appears in the session list: it is archived right after creation while staying live.
+The side session never appears in the session list: it is detached from its workspace right after creation and keeps running (archiving would refuse it a model step).
 
 **Closing the tab ends it**: the side session stops and its stored transcript is deleted (the whole session directory is removed).
 
