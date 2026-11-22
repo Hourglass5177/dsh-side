@@ -36,9 +36,9 @@ The two entry points:
 
 ## Context inheritance
 
-DSH's session fork copies the source conversation into a new session, and the chat panel displays that copied history.
+dsh-side forks the current conversation at event zero: the child inherits the workspace, directory and agent preset but copies no messages, so the transcript starts empty. Event zero of a session log is a configuration event (a permission preset or a subagent descriptor), so it renders no chat row.
 
-dsh-side uses injection: it creates a blank session and the host writes the current conversation's model-visible messages into it as one context record. The transcript stays empty while the model can read the full context.
+The context itself is injected: the host reads the parent's model-visible messages and writes them into the child as one context record. The transcript stays empty while the model can read the full context.
 
 The record appears as a collapsed entry at the top of the panel; expanding it shows what was inherited.
 
@@ -54,8 +54,10 @@ Install the local directory from the app:
 
 1. Open **Plugins**;
 2. Click **Add plugin** and select the cloned `dsh-side` directory;
-3. `@local/dsh-side` appears in the list once installed;
+3. `dsh-side` appears in the list once installed;
 4. Restart the app once (the host half reloads), then refresh the page.
+
+The field also accepts the Git address (`https://github.com/Hourglass5177/dsh-side`); once the plugin is published to npm, `dsh-side` alone is enough.
 
 Web / CLI builds can install from the command line:
 
@@ -85,7 +87,8 @@ Ask in the composer at the bottom; answers stream as usual. Continue asking in t
 | **No dependencies, no build** | No npm dependencies, no bundler, no compile step; DSH loads `client.js` and `index.js` directly. |
 | **Product UI reuse** | The panel renders `conversation.content`; the composer is `conversation.composer.bar`. |
 | **Unchanged session model** | No new event types, no changes to the main conversation, no subagent catalog entries; a side session is an ordinary session. |
-| **Size** | ~590 lines browser-side, ~320 lines host-side, commented JavaScript. |
+| **Inheritance by the runtime** | The side session is a fork of the current conversation at event zero; workspace, directory and preset come from the runtime, and the plugin resolves no workspace. |
+| **Size** | ~566 lines browser-side, ~326 lines host-side, commented JavaScript. |
 
 ## Known limits
 

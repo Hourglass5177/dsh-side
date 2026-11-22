@@ -22,9 +22,18 @@ No dependencies, no build step. Node 22+.
 ## What lives where
 
 - `client.js` — browser half: `/side` command, start-page card, tab body and chip,
-  close handling. It must not render chat UI of its own.
+  close handling, and the `fork({ atSeq: 0 })` call. It must not render chat UI of
+  its own.
 - `index.js` — Host half: reads the title marker, injects the parent conversation,
   and reaps archived side sessions from disk.
+
+## How inheritance works
+
+The browser half calls `sessions.fork({ sessionId, atSeq: 0 })`: event zero of a
+session log is a configuration event, so the child copies no messages, while the
+runtime attaches the source workspace, directory and preset. An ordinary fork does
+not record its parent, so the `〔side〕<parentSessionId>` title marker is still how the
+Host finds the source thread — do not remove it.
 
 ## House rules
 

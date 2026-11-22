@@ -3,4 +3,4 @@
 # feature lives entirely in that browser half.
 - insert:
     - id: dsh-side
-      name: '@local/dsh-side'
+      name: dsh-side

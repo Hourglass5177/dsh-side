@@ -1,5 +1,5 @@
 /**
- * Host half of the `@local/dsh-side` bundle.
+ * Host half of the `dsh-side` bundle.
  *
  * Supplies the two things a browser cannot do:
  *
@@ -14,7 +14,7 @@
  *     so once a side Session is archived this module removes the one storage
  *     directory that belongs to it.
  *
- * @module @local/dsh-side
+ * @module dsh-side
  */
 import { readdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'

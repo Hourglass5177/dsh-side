@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0]
+
+### Changed
+
+- The package is now `dsh-side` (was `@local/dsh-side`) and is publish-ready:
+  `private` removed, `engines` and `publishConfig` added.
+- Inheritance now forks the current conversation at event zero
+  (`sessions.fork({ atSeq: 0 })`). The child inherits workspace, directory and agent
+  preset from the runtime and copies no messages, so the workspace lookup in the
+  plugin is gone and the panel still starts empty.
+
+### Docs
+
+- Install section documents the Git-address channel and the future npm name.
+
 ## [3.2.0]
 
 ### Added

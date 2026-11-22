@@ -1,9 +1,14 @@
 {
-  "name": "@local/dsh-side",
-  "version": "3.2.0",
-  "private": true,
+  "name": "dsh-side",
+  "version": "3.3.0",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "A temporary side session for DeepSeek Harness: the product's own conversation view, the current thread inherited as one context record, and the session deleted when you close it.",
   "keywords": [
     "dsh",

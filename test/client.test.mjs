@@ -20,7 +20,7 @@ globalThis.window = {
   },
   __ModuleLoader__: {
     load({ id, factory }) {
-      results.push({ name: 'loader id is the package name', ok: id === '@local/dsh-side', detail: id })
+      results.push({ name: 'loader id is the package name', ok: id === 'dsh-side', detail: id })
       moduleExports = factory(name => {
         if (name !== 'react') throw new Error(`unexpected require ${name}`)
         return {
@@ -73,7 +73,11 @@ function makeClient(options = {}) {
       if (options.createThrows) throw new Error('create failed')
       return options.childId ?? 'child-side-1'
     },
-    async fork(request) { calls.fork.push(request); return 'forked-1' },
+    async fork(request) {
+      calls.fork.push(request)
+      if (options.forkThrows) throw new Error('fork failed')
+      return options.childId ?? 'child-side-1'
+    },
     retain(target, opts) {
       calls.retained = { target, opts }
       return { release: () => { calls.released = true } }
@@ -144,9 +148,9 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
 
   command.ui.run({ sessionId: 'parent-1' })
   await settle()
-  check('creates a Session instead of forking', c.calls.create.length === 1 && c.calls.fork.length === 0, c.calls.create)
-  check('joins the parent workspace', c.calls.create[0]?.workspaceId === 'ws-1', c.calls.create[0])
-  check('inherits the directory', c.calls.create[0]?.cwd === 'F:/work', c.calls.create[0])
+  check('forks at event zero', c.calls.fork.length === 1 && c.calls.create.length === 0, c.calls.fork)
+  check('cuts the parent at seq 0', c.calls.fork[0]?.sessionId === 'parent-1' && c.calls.fork[0]?.atSeq === 0, c.calls.fork[0])
+  check('inherits workspace and directory through the fork', c.calls.fork[0]?.workspaceId === undefined && c.calls.fork[0]?.cwd === undefined, c.calls.fork[0])
   check('titles the side session with its parent', c.calls.renamed[0] === '〔side〕parent-1', c.calls.renamed)
   const address = c.calls.open[0]?.address
   check('opens the side panel', typeof address === 'string' && address.endsWith('/child-side-1'), address)
@@ -160,7 +164,7 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   const body = c.calls.registrations.find(r => r.name === 'sidebar.right.pane.tab')
   check('tab body declares only its conversation child', JSON.stringify(Object.keys(body?.children ?? {})) === '["side.chat.conversation"]', body?.children)
   const title = c.calls.registrations.find(r => r.name === 'sidebar.right.pane.tab.title')
-  check('registers the chip title component', title?.key === '@local/dsh-side/chat', title)
+  check('registers the chip title component', title?.key === 'dsh-side/chat', title)
   check('no Conversation target is registered', !c.calls.injected.some(deps => deps.includes('uiConversation')), c.calls.injected)
   check('content seat registered', c.calls.registrations.some(r => r.name === 'side.chat.conversation'))
   const tab = c.calls.tabs[0]
@@ -177,7 +181,7 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   check('guide entry has an order', Number.isSafeInteger(page?.guide?.[0]?.order), page?.guide?.[0])
   check('guide entry carries the mark', typeof page?.guide?.[0]?.icon === 'function', page?.guide?.[0]?.icon)
   check('each card opens its own page', page?.multiple === true, page?.multiple)
-  const pageBody = c.calls.registrations.find(r => r.key === '@local/dsh-side/new')
+  const pageBody = c.calls.registrations.find(r => r.key === 'dsh-side/new')
   check('registers the guide page body', pageBody !== undefined, c.calls.registrations.map(r => r.key))
 }
 
@@ -196,11 +200,11 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
 
 // --- 4. failures are contained
 {
-  const failing = makeClient({ createThrows: true })
+  const failing = makeClient({ forkThrows: true })
   let threw = false
   try { failing.commands.side.ui.run({ sessionId: 'parent-1' }); await settle() } catch { threw = true }
-  check('create failure does not throw', threw === false)
-  check('create failure opens nothing', failing.calls.open.length === 0)
+  check('fork failure does not throw', threw === false)
+  check('fork failure opens nothing', failing.calls.open.length === 0)
 
   const noSurface = makeClient({ openThrows: true })
   noSurface.commands.side.ui.run({ sessionId: 'parent-1' })

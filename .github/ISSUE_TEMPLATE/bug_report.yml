@@ -17,7 +17,7 @@ body:
     id: plugin-version
     attributes:
       label: dsh-side version
-      description: Shown next to `@local/dsh-side` in Plugins, or the git commit you installed.
+      description: Shown next to `dsh-side` in Plugins, or the git commit you installed.
   - type: textarea
     id: expected
     attributes:

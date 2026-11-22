@@ -1,14 +1,14 @@
 /**
- * Client half of the `@local/dsh-side` bundle.
+ * Client half of the `dsh-side` bundle.
  *
  * `/side` opens a temporary conversation beside the current thread:
- *   1. `ctx.sessions.create()` makes an independent blank Session — deliberately
- *      NOT a fork, so its log carries no copied history and the product's own
- *      conversation view renders an empty transcript.
- *   2. The Session is titled `〔side〕<parentSessionId>`; the Host half reads that
- *      marker and injects the parent's model-visible messages as one context record,
- *      so the side agent inherits the real conversation while the transcript stays
- *      empty except for one collapsed context row.
+ *   1. `ctx.sessions.fork({ atSeq: 0 })` cuts the current Session at event zero: the
+ *      child inherits its workspace, directory and preset but no messages, so the
+ *      product's own conversation view renders an empty transcript.
+ *   2. The Session is titled `〔side〕<parentSessionId>`; an ordinary fork records no
+ *      parent, so that marker is how the Host finds the source thread. It then
+ *      injects the parent's model-visible messages as one context record, which is
+ *      what lets the side agent inherit the real conversation.
  *   3. A right-Sidebar tab type owned by this bundle hosts the product's own
  *      `conversation.content` — official rows, official composer, official keys.
  *      Closing the tab stops and archives the Session, and the Host reaper deletes
@@ -16,10 +16,10 @@
  *
  * There is no hand-written chat UI in this bundle.
  *
- * @module @local/dsh-side
+ * @module dsh-side
  */
 window.__ModuleLoader__.load({
-  id: '@local/dsh-side',
+  id: 'dsh-side',
   factory(require) {
     const React = require('react')
     const h = React.createElement
@@ -27,11 +27,11 @@ window.__ModuleLoader__.load({
     /** Resource protocol, tab kind, and tab-type id owned by this bundle. */
     const PROTOCOL = 'sidechat'
     const KIND = 'sidechat'
-    const TAB_ID = '@local/dsh-side/chat'
+    const TAB_ID = 'dsh-side/chat'
     const ADDRESS_PREFIX = `dsh-resource://${PROTOCOL}/session/`
 
     /** Page tab type that backs the guide card; it hands off to a resource tab. */
-    const PAGE_ID = '@local/dsh-side/new'
+    const PAGE_ID = 'dsh-side/new'
     const PAGE_KIND = 'sidechat-new'
 
     /** Child slot hosting the product's conversation inside this tab body. */
@@ -430,52 +430,23 @@ window.__ModuleLoader__.load({
         }, 'dsh-side: close cleanup')
 
         /**
-         * Create a blank side Session beside this thread and show it on the right.
-         * The Host half injects this thread's messages into it once the title marker
-         * is visible, which is what makes the transcript start clean.
+         * Fork this thread at event zero and mark the child for the Host.
+         *
+         * Event zero of a Session is a configuration event (`permission/preset` or
+         * `subagent/descriptor`), never a message, so the seed carries no transcript
+         * row. The fork inherits the workspace, directory and agent preset from the
+         * source, which is why nothing here resolves a workspace.
+         *
          * @param {string} parentSessionId - the thread the user invoked `/side` from.
-         */
-        /**
-         * Find the Workspace the parent conversation belongs to, so the side Session
-         * joins it instead of asking the user to pick one.
-         * @param {string} parentSessionId - the thread being forked.
-         * @returns {string | undefined} Workspace id.
-         */
-        function workspaceIdOf(parentSessionId) {
-          let service
-          try {
-            service = ctx.workspaces ?? ctx.get?.('workspaces')
-          } catch (_noWorkspaces) {
-            return undefined
-          }
-          try {
-            const items = service?.list?.getSnapshot?.()?.items
-            if (!Array.isArray(items)) return undefined
-            const owning = items.find(item => Array.isArray(item?.sessionIds)
-              && item.sessionIds.includes(parentSessionId))
-            return typeof owning?.workspaceId === 'string' ? owning.workspaceId : undefined
-          } catch (_unreadableWorkspaces) {
-            return undefined
-          }
-        }
-
-        /**
-         * Create the side Session and mark it; the caller decides where it opens.
-         * @param {string} parentSessionId - the thread it inherits from.
          * @returns {Promise<string | undefined>} the new Session id.
          */
         async function createSide(parentSessionId) {
           if (typeof parentSessionId !== 'string' || parentSessionId === '') return undefined
-          const row = ctx.sessions.list.getSnapshot().byId?.[parentSessionId]
-          const workspaceId = workspaceIdOf(parentSessionId)
           let childId
           try {
-            childId = await ctx.sessions.create({
-              ...(workspaceId === undefined ? {} : { workspaceId }),
-              ...(typeof row?.cwd === 'string' ? { cwd: row.cwd } : {}),
-            })
+            childId = await ctx.sessions.fork({ sessionId: parentSessionId, atSeq: 0 })
           } catch (error) {
-            console.warn('[dsh-side] could not create a side conversation:', error)
+            console.warn('[dsh-side] could not fork a side session:', error)
             return undefined
           }
           if (typeof childId !== 'string' || childId === '') {
