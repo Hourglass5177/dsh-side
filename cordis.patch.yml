@@ -1,0 +1,6 @@
+# The row name must equal the package name: dsh-client-modules mounts a package's
+# browser half on the row whose specifier is the package name, and this bundle's
+# feature lives entirely in that browser half.
+- insert:
+    - id: dsh-side
+      name: '@local/dsh-side'

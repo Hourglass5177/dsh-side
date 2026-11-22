@@ -1,0 +1,326 @@
+/**
+ * Host half of the `@local/dsh-side` bundle.
+ *
+ * Supplies the two things a browser cannot do:
+ *
+ *  1. **Inherit the parent conversation.** The Client creates a blank Session (no
+ *     fork seed, so the product's own conversation view starts clean) and titles it
+ *     `〔side〕<parentSessionId>`. When that Session's Agent appears, this module
+ *     reads the title, takes the parent Agent's model-visible messages, and calls
+ *     `agent.inject()` on the child. The injection is a durable
+ *     `agent/inbox/spliced` record, so the child genuinely inherits the thread while
+ *     its transcript shows only one collapsed context row.
+ *  2. **Delete the closed side conversation.** DSH has no Session-delete operation,
+ *     so once a side Session is archived this module removes the one storage
+ *     directory that belongs to it.
+ *
+ * @module @local/dsh-side
+ */
+import { readdir, rm } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import path from 'node:path'
+
+/** Services this plugin needs; without them it stays inactive instead of throwing. */
+export const inject = ['workspaceRegistry', 'sessionQuery']
+
+/** Title marker the Client writes: `〔side〕<parentSessionId>`. */
+const SIDE_MARK = '〔side〕'
+
+/** A Session id is used as one path segment, so reject anything path-like. */
+const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/u
+
+/** Buckets are the persistence layer's encoded working directories. */
+const BUCKET_NAME = /^--.*--$/u
+
+/** One persisted Session directory holds exactly one of these. */
+const SESSION_FILE = /^session\..*\.jsonl/u
+
+/** How often the reaper looks for a side conversation that has been closed. */
+const SWEEP_INTERVAL_MS = 4000
+
+/** Give the Client's archive a moment before the first sweep. */
+const FIRST_SWEEP_DELAY_MS = 2000
+
+/** How long to wait for the Client's title marker on a new Agent. */
+const TITLE_POLL_ATTEMPTS = 40
+
+/** Delay between title polls while an Agent is being titled. */
+const TITLE_POLL_INTERVAL_MS = 100
+
+/** Bound on how much inherited text one injection carries. */
+const INHERITED_TEXT_LIMIT = 60000
+
+/**
+ * @param {number} ms - delay in milliseconds.
+ * @returns {Promise<void>} resolves after the delay.
+ */
+function sleep(ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    timer.unref?.()
+  })
+}
+
+/**
+ * Roots that may hold the JSONL persistence directories, most specific first.
+ * @param {unknown} config - the row's `config` value.
+ * @returns {string[]} candidate roots in priority order.
+ */
+function candidateRoots(config) {
+  const roots = []
+  const configured = typeof config === 'object' && config !== null ? config.sessionsRoot : undefined
+  if (typeof configured === 'string' && configured !== '') roots.push(configured)
+  const home = process.env.DSH_HOME
+  if (typeof home === 'string' && home !== '') roots.push(path.join(home, 'sessions'))
+  roots.push(path.join(homedir(), '.dsh', 'sessions'))
+  return [...new Set(roots)]
+}
+
+/**
+ * Locate the one directory that stores this Session.
+ *
+ * Only direct children of `--…--` buckets are considered, the directory name must
+ * be the Session id itself, and it must contain a persisted Session log.
+ *
+ * @param {string} sessionId - Session whose storage to locate.
+ * @param {readonly string[]} roots - candidate persistence roots.
+ * @returns {Promise<string | undefined>} absolute directory, when found.
+ */
+async function findSessionDirectory(sessionId, roots) {
+  for (const root of roots) {
+    let buckets
+    try {
+      buckets = await readdir(root, { withFileTypes: true })
+    } catch (_noSuchRoot) {
+      continue
+    }
+    for (const bucket of buckets) {
+      if (!bucket.isDirectory() || !BUCKET_NAME.test(bucket.name)) continue
+      const directory = path.join(root, bucket.name, sessionId)
+      let entries
+      try {
+        entries = await readdir(directory, { withFileTypes: true })
+      } catch (_noSuchSession) {
+        continue
+      }
+      if (!entries.some(entry => entry.isFile() && SESSION_FILE.test(entry.name))) continue
+      return directory
+    }
+  }
+  return undefined
+}
+
+/**
+ * Delete one closed side conversation's stored transcript.
+ * @param {any} ctx - Host plugin context.
+ * @param {string} sessionId - the closed side Session.
+ * @param {readonly string[]} roots - candidate persistence roots.
+ */
+async function purge(ctx, sessionId, roots) {
+  if (!SAFE_SESSION_ID.test(sessionId)) return
+  const directory = await findSessionDirectory(sessionId, roots)
+  if (directory === undefined) {
+    ctx.logger?.warn?.(`dsh-side: no stored transcript found for side conversation "${sessionId}"`)
+    return
+  }
+  try {
+    await rm(directory, { recursive: true, force: true })
+    ctx.logger?.info?.(`dsh-side: purged side conversation "${sessionId}"`)
+  } catch (error) {
+    ctx.logger?.warn?.(`dsh-side: could not purge side conversation "${sessionId}": ${String(error)}`)
+  }
+}
+
+/**
+ * @param {unknown} title - title snapshot from the Session query.
+ * @returns {string | undefined} the parent Session id encoded in the marker.
+ */
+function parentOfTitle(title) {
+  const text = typeof title?.title === 'string' ? title.title : ''
+  if (!text.startsWith(SIDE_MARK)) return undefined
+  const parent = text.slice(SIDE_MARK.length).trim()
+  return SAFE_SESSION_ID.test(parent) ? parent : undefined
+}
+
+/**
+ * @param {unknown} message - one derived model message.
+ * @returns {string} its text content, without tool payloads.
+ */
+function textOfMessage(message) {
+  const content = message?.content
+  if (!Array.isArray(content)) return ''
+  let text = ''
+  for (const block of content) {
+    if (block?.type === 'text' && typeof block.text === 'string') text += block.text
+  }
+  return text.trim()
+}
+
+/**
+ * @param {unknown} role - message role.
+ * @returns {string} a stable speaker label.
+ */
+function speakerOf(role) {
+  switch (role) {
+    case 'user': return 'User'
+    case 'assistant': return 'Assistant'
+    case 'tool': return 'Tool'
+    case 'system': return 'System'
+    default: return 'Context'
+  }
+}
+
+/**
+ * Build the injected context from the parent Agent's model-visible messages.
+ * @param {any} parentAgent - live parent Agent.
+ * @returns {object[]} content blocks, empty when there is nothing to inherit.
+ */
+function inheritedBlocks(parentAgent) {
+  let messages
+  try {
+    messages = parentAgent?.session?.deriveMessages?.() ?? []
+  } catch (error) {
+    return []
+  }
+  if (!Array.isArray(messages) || messages.length === 0) return []
+  const lines = []
+  for (const message of messages) {
+    const text = textOfMessage(message)
+    if (text === '') continue
+    lines.push(`${speakerOf(message?.role)}: ${text}`)
+  }
+  if (lines.length === 0) return []
+  let body = lines.join('\n\n')
+  if (body.length > INHERITED_TEXT_LIMIT) {
+    body = body.slice(body.length - INHERITED_TEXT_LIMIT)
+  }
+  return [{
+    type: 'text',
+    text: `Context inherited from the main conversation. It is background; continue from the question that follows.\n\n${body}`,
+  }]
+}
+
+/**
+ * Register the context injector and the closed-conversation reaper.
+ * @param {any} ctx - Host plugin context.
+ * @param {unknown} config - the row's `config` value.
+ */
+export function apply(ctx, config) {
+  const roots = candidateRoots(config)
+  const delayOption = (key, fallback) => {
+    const configured = typeof config === 'object' && config !== null ? config[key] : undefined
+    return Number.isSafeInteger(configured) && configured >= 0 ? configured : fallback
+  }
+  const firstDelay = delayOption('firstSweepDelayMs', FIRST_SWEEP_DELAY_MS)
+  const interval = delayOption('sweepIntervalMs', SWEEP_INTERVAL_MS)
+
+  const pollAttempts = delayOption('titlePollAttempts', TITLE_POLL_ATTEMPTS)
+  const pollInterval = delayOption('titlePollIntervalMs', TITLE_POLL_INTERVAL_MS)
+
+  const inspected = new Set()
+  const injected = new Set()
+  let running = false
+
+  // ---- inheritance -------------------------------------------------------
+
+  /**
+   * Wait for the Client's title marker on a freshly created Agent.
+   * @param {string} sessionId - new Session id.
+   * @returns {Promise<string | undefined>} the parent Session id, when titled in time.
+   */
+  async function waitForParent(sessionId) {
+    for (let attempt = 0; attempt < Math.max(1, pollAttempts); attempt += 1) {
+      let title
+      try {
+        title = await ctx.sessionQuery?.readTitle?.(sessionId)
+      } catch (_unreadableTitle) {
+        title = undefined
+      }
+      const parent = parentOfTitle(title)
+      if (parent !== undefined) return parent
+      await sleep(pollInterval)
+    }
+    return undefined
+  }
+
+  /**
+   * Inject the parent conversation into one side Session's Agent.
+   * @param {any} agent - the new Agent.
+   */
+  async function inherit(agent) {
+    const sessionId = agent?.session?.header?.id
+    if (typeof sessionId !== 'string' || !SAFE_SESSION_ID.test(sessionId) || injected.has(sessionId)) return
+    const parentId = await waitForParent(sessionId)
+    if (parentId === undefined) return
+    injected.add(sessionId)
+    let parentAgent
+    try {
+      parentAgent = ctx.agents?.get?.(parentId)
+    } catch (_noRegistry) {
+      parentAgent = undefined
+    }
+    if (parentAgent === undefined || parentAgent === null) {
+      ctx.logger?.warn?.(`dsh-side: parent conversation "${parentId}" is not live; side conversation starts without inherited context`)
+      return
+    }
+    const blocks = inheritedBlocks(parentAgent)
+    if (blocks.length === 0) {
+      ctx.logger?.warn?.('dsh-side: the parent conversation has no visible messages to inherit')
+      return
+    }
+    try {
+      await agent.inject({ content: blocks, source: { kind: 'side-context' } })
+      ctx.logger?.info?.(`dsh-side: inherited ${blocks[0].text.length} characters into side conversation "${sessionId}"`)
+    } catch (error) {
+      ctx.logger?.warn?.(`dsh-side: could not inject the inherited context into "${sessionId}": ${String(error)}`)
+    }
+  }
+
+  ctx.effect(() => ctx.on('agent/created', (...args) => {
+    // The payload may be the Agent itself or an AgentHandle; accept either shape.
+    for (const value of args) {
+      if (value === null || typeof value !== 'object') continue
+      const agent = value.session !== undefined ? value : value.agent
+      if (agent === undefined || agent === null || typeof agent.inject !== 'function') continue
+      void inherit(agent)
+      return
+    }
+  }), 'dsh-side: inherited context')
+
+  // ---- reaper ------------------------------------------------------------
+
+  async function sweep() {
+    if (running) return
+    running = true
+    try {
+      const archived = ctx.workspaceRegistry?.archivedSessionIds
+      if (!Array.isArray(archived)) return
+      for (const sessionId of archived) {
+        if (inspected.has(sessionId)) continue
+        inspected.add(sessionId)
+        if (typeof sessionId !== 'string' || !SAFE_SESSION_ID.test(sessionId)) continue
+        let title
+        try {
+          title = await ctx.sessionQuery?.readTitle?.(sessionId)
+        } catch (_unreadableTitle) {
+          continue
+        }
+        if (!String(title?.title ?? '').startsWith(SIDE_MARK)) continue
+        await purge(ctx, sessionId, roots)
+      }
+    } finally {
+      running = false
+    }
+  }
+
+  ctx.effect(() => {
+    const first = setTimeout(() => { void sweep() }, firstDelay)
+    const timer = setInterval(() => { void sweep() }, interval)
+    first.unref?.()
+    timer.unref?.()
+    return () => {
+      clearTimeout(first)
+      clearInterval(timer)
+    }
+  }, 'dsh-side: closed side conversation reaper')
+}

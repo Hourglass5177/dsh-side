@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Side session",
+    "description": "A temporary side session beside the current thread. Choose /side in the composer: the right sidebar opens a new session whose message rows and composer (attachments, permission, model, voice, slash commands, @ references) are the product own components, so nothing feels foreign. It inherits the current conversation automatically: the inherited material lands as one collapsed context record, which keeps the transcript empty while the model can read the thread. The side session shares this thread workspace and directory, and closing its tab stops it, removes it from every list, and deletes its stored transcript. Inheritance needs the parent conversation to be live on the Host; when it is not, the panel still opens without inherited context."
+  }
+}
