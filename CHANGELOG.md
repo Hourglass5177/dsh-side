@@ -9,6 +9,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1]
+
+### Fixed
+
+- The seed boundary now materializes as a node. Returning `null` from the seed
+  definition kept the boundary out of the builder, so the filter never engaged and the
+  panel rendered the whole inherited history.
+
 ## [1.3.0]
 
 ### Changed

@@ -210,6 +210,8 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
 {
   const c = makeClient()
   check('registers the side view target', c.calls.views.some(v => v.target === 'side' && typeof v.create === 'function'), c.calls.views.map(v => v.target))
+  const seedDefinition = c.calls.eventDefinitions.find(d => d.kind === 'side-seed')
+  check('the seed definition materializes a boundary node', seedDefinition?.buildViewNode?.({ state: { id: 'seed', seq: 9 } })?.data?.seq === 9, seedDefinition?.kind)
   const kinds = c.calls.eventDefinitions.map(d => d.kind)
   check('registers the seed boundary definition', kinds.includes('side-seed'), kinds)
   check('registers user/assistant/tool definitions', kinds.includes('side-user') && kinds.includes('side-assistant') && kinds.includes('side-tool'), kinds)

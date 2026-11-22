@@ -309,7 +309,12 @@ window.__ModuleLoader__.load({
             match: event => (event?.type === 'session/end-seed' ? { id: 'seed', role: 'start' } : null),
             start: (_context, match) => ({ id: 'seed', seq: match.event.seq ?? 0 }),
             update: (_context, match) => ({ id: 'seed', seq: match.event.seq ?? 0 }),
-            buildViewNode: () => null,
+            // The boundary must reach the builder as a node: returning null here drops the
+            // only evidence of where the inherited prefix ends, and every inherited row
+            // would render. The component skips this kind.
+            buildViewNode: context => (context.state === undefined
+              ? null
+              : { key: 'side-seed:seed', kind: 'side-seed', id: 'seed', target: SIDE_TARGET, data: context.state }),
           }
           const user = {
             kind: 'side-user',
