@@ -61,12 +61,12 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
 // --- 1. inherits the parent conversation once, into the titled side session
 {
   const child = {
-    session: { header: { id: 'child-side-1' } },
+    session: { header: { id: 'session-side-parent-1-0123abcd' } },
     async inject(payload) { callsOf.inject.push(payload) },
   }
   const callsOf = { inject: [] }
   const parent = { session: { deriveMessages: () => PARENT_MESSAGES } }
-  const ctx = makeCtx({ titles: { 'child-side-1': '〔side〕parent-1' }, parents: { 'parent-1': parent } })
+  const ctx = makeCtx({ parents: { 'parent-1': parent } })
   mod.apply(ctx, fast)
   ctx.emitCreated(child)
   await sleep(120)
@@ -89,7 +89,7 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
 {
   const callsOf = { inject: [] }
   const child = { session: { header: { id: 'child-plain-session' } }, async inject(p) { callsOf.inject.push(p) } }
-  const ctx = makeCtx({ titles: { 'child-plain-session': 'ordinary title' }, parents: {} })
+  const ctx = makeCtx({ parents: {} })
   mod.apply(ctx, fast)
   ctx.emitCreated(child)
   await sleep(120)
@@ -100,18 +100,18 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
 {
   const callsOf = { inject: [] }
   const child = { session: { header: { id: 'child-evil-session' } }, async inject(p) { callsOf.inject.push(p) } }
-  const ctx = makeCtx({ titles: { 'child-evil-session': '〔side〕../../etc/passwd' }, parents: {} })
+  const ctx = makeCtx({ parents: {} })
   mod.apply(ctx, fast)
   ctx.emitCreated(child)
   await sleep(120)
-  check('refuses a path-like parent id', callsOf.inject.length === 0, callsOf.inject.length)
+  check('refuses a path-like parent id in the session id', callsOf.inject.length === 0, callsOf.inject.length)
 }
 
 // --- 4. parent offline or empty: no injection, warned
 {
   const callsOf = { inject: [] }
-  const child = { session: { header: { id: 'child-side-2' } }, async inject(p) { callsOf.inject.push(p) } }
-  const offline = makeCtx({ titles: { 'child-side-2': '〔side〕parent-2' }, parents: {} })
+  const child = { session: { header: { id: 'session-side-parent-2-0123abcd' } }, async inject(p) { callsOf.inject.push(p) } }
+  const offline = makeCtx({ parents: {} })
   mod.apply(offline, fast)
   offline.emitCreated(child)
   await sleep(120)
@@ -119,10 +119,10 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
   check('warns about the offline parent', offline.calls.warns.some(m => m.includes('not live')), offline.calls.warns)
 
   const empty = makeCtx({
-    titles: { 'child-side-3': '〔side〕parent-3' },
+    titles: { 'session-side-parent-3-0123abcd': '〔side〕parent-3' },
     parents: { 'parent-3': { session: { deriveMessages: () => [] } } },
   })
-  const child3 = { session: { header: { id: 'child-side-3' } }, async inject(p) { callsOf.inject.push(p) } }
+  const child3 = { session: { header: { id: 'session-side-parent-3-0123abcd' } }, async inject(p) { callsOf.inject.push(p) } }
   mod.apply(empty, fast)
   empty.emitCreated(child3)
   await sleep(120)
@@ -130,33 +130,12 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
   check('warns about the empty parent', empty.calls.warns.some(m => m.includes('no visible messages')), empty.calls.warns)
 }
 
-// --- 5. the side session is detached from its workspace so it leaves the lists
-{
-  const detached = []
-  const workspace = {
-    sessionIds: ['child-detach-1'],
-    async detachSession(id) { detached.push(id) },
-  }
-  const child = { session: { header: { id: 'child-detach-1' } }, async inject() {} }
-  const parent = { session: { deriveMessages: () => PARENT_MESSAGES } }
-  const ctx = makeCtx({
-    titles: { 'child-detach-1': '〔side〕parent-detach' },
-    parents: { 'parent-detach': parent },
-    workspaces: [workspace],
-  })
-  mod.apply(ctx, fast)
-  ctx.emitCreated(child)
-  await sleep(120)
-  check('detaches the side session from its workspace', detached.length === 1 && detached[0] === 'child-detach-1', detached)
-  check('still injects the inherited context', ctx.calls.infos.some(m => m.includes('inherited')), ctx.calls.infos)
-}
-
-// --- 6. the parent's live permission preset is copied to the child
+// --- 5. the parent's live permission preset is copied to the child
 {
   const applied = []
-  const child = { session: { header: { id: 'child-perm-1' } }, async inject() {} }
+  const child = { session: { header: { id: 'session-side-parent-perm-0123abcd' } }, async inject() {} }
   const parent = { session: { deriveMessages: () => PARENT_MESSAGES } }
-  const ctx = makeCtx({ titles: { 'child-perm-1': '〔side〕parent-perm' }, parents: { 'parent-perm': parent } })
+  const ctx = makeCtx({ parents: { 'parent-perm': parent } })
   ctx.permissionPresets = {
     current: session => (session === parent.session ? 'danger-full-access' : 'custom'),
     set: (session, preset) => { applied.push({ session, preset }) },
@@ -168,8 +147,8 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
   check('applies it to the child session', applied[0]?.session === child.session, applied[0]?.session === child.session)
 
   // an unmatched custom state must not be written
-  const other = { session: { header: { id: 'child-perm-2' } }, async inject() {} }
-  const ctx2 = makeCtx({ titles: { 'child-perm-2': '〔side〕parent-perm' }, parents: { 'parent-perm': parent } })
+  const other = { session: { header: { id: 'session-side-parent-perm-baadf00d' } }, async inject() {} }
+  const ctx2 = makeCtx({ parents: { 'parent-perm': parent } })
   ctx2.permissionPresets = { current: () => 'custom', set: () => { applied.push('unexpected') } }
   mod.apply(ctx2, fast)
   ctx2.emitCreated(other)
@@ -177,11 +156,11 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
   check('never writes the custom state', !applied.includes('unexpected'), applied)
 }
 
-// --- 7. reaper still purges a closed side conversation
+// --- 6. reaper purges an archived side session by its id
 {
   const root = await mkdtemp(path.join(tmpdir(), 'dsh-side-reap-'))
   const bucket = path.join(root, '--F-test-bucket--')
-  const sideId = 'session-11111111-2222-3333-4444-555555555555'
+  const sideId = 'session-side-parent-1-0123abcd'
   const otherId = 'session-99999999-8888-7777-6666-555555555555'
   for (const id of [sideId, otherId]) {
     await mkdir(path.join(bucket, id), { recursive: true })
@@ -189,7 +168,6 @@ const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 
   }
   const ctx = makeCtx({
     archived: [sideId, otherId],
-    titles: { [sideId]: `〔side-closed〕parent-1`, [otherId]: 'ordinary title' },
   })
   mod.apply(ctx, {
     sessionsRoot: root, firstSweepDelayMs: 5, sweepIntervalMs: 20,

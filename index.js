@@ -24,11 +24,8 @@ import path from 'node:path'
 /** Services this plugin needs; without them it stays inactive instead of throwing. */
 export const inject = ['workspaceRegistry', 'sessionQuery']
 
-/** Title marker the Client writes for an open side session. */
-const SIDE_MARK = '〔side〕'
-
-/** Title marker the Client writes when the tab closes; only these are reclaimed. */
-const SIDE_CLOSED_MARK = '〔side-closed〕'
+/** Every side Session id starts with this: `session-side-<parentSessionId>-<random>`. */
+const SIDE_ID_PREFIX = 'session-side-'
 
 /** A Session id is used as one path segment, so reject anything path-like. */
 const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/u
@@ -136,13 +133,18 @@ async function purge(ctx, sessionId, roots) {
 }
 
 /**
- * @param {unknown} title - title snapshot from the Session query.
- * @returns {string | undefined} the parent Session id encoded in the marker.
+ * Recover the parent Session id from a side Session id.
+ * @param {string} sessionId - the side Session id.
+ * @returns {string | undefined} the parent id, when the id carries one.
  */
-function parentOfTitle(title) {
-  const text = typeof title?.title === 'string' ? title.title : ''
-  if (!text.startsWith(SIDE_MARK)) return undefined
-  const parent = text.slice(SIDE_MARK.length).trim()
+function parentOfSideId(sessionId) {
+  if (!sessionId.startsWith(SIDE_ID_PREFIX)) return undefined
+  const rest = sessionId.slice(SIDE_ID_PREFIX.length)
+  const cut = rest.lastIndexOf('-')
+  if (cut <= 0) return undefined
+  const parent = rest.slice(0, cut)
+  const suffix = rest.slice(cut + 1)
+  if (!/^[0-9a-f]{8}$/u.test(suffix)) return undefined
   return SAFE_SESSION_ID.test(parent) ? parent : undefined
 }
 
@@ -228,33 +230,13 @@ export function apply(ctx, config) {
   // ---- inheritance -------------------------------------------------------
 
   /**
-   * Wait for the Client's title marker on a freshly created Agent.
-   * @param {string} sessionId - new Session id.
-   * @returns {Promise<string | undefined>} the parent Session id, when titled in time.
-   */
-  async function waitForParent(sessionId) {
-    for (let attempt = 0; attempt < Math.max(1, pollAttempts); attempt += 1) {
-      let title
-      try {
-        title = await ctx.sessionQuery?.readTitle?.(sessionId)
-      } catch (_unreadableTitle) {
-        title = undefined
-      }
-      const parent = parentOfTitle(title)
-      if (parent !== undefined) return parent
-      await sleep(pollInterval)
-    }
-    return undefined
-  }
-
-  /**
    * Inject the parent conversation into one side Session's Agent.
    * @param {any} agent - the new Agent.
    */
   async function inherit(agent) {
     const sessionId = agent?.session?.header?.id
     if (typeof sessionId !== 'string' || !SAFE_SESSION_ID.test(sessionId) || injected.has(sessionId)) return
-    const parentId = await waitForParent(sessionId)
+    const parentId = parentOfSideId(sessionId)
     if (parentId === undefined) return
     injected.add(sessionId)
     let parentAgent
@@ -343,13 +325,7 @@ export function apply(ctx, config) {
         if (inspected.has(sessionId)) continue
         inspected.add(sessionId)
         if (typeof sessionId !== 'string' || !SAFE_SESSION_ID.test(sessionId)) continue
-        let title
-        try {
-          title = await ctx.sessionQuery?.readTitle?.(sessionId)
-        } catch (_unreadableTitle) {
-          continue
-        }
-        if (!String(title?.title ?? '').startsWith(SIDE_CLOSED_MARK)) continue
+        if (!sessionId.startsWith(SIDE_ID_PREFIX)) continue
         await purge(ctx, sessionId, roots)
       }
     } finally {

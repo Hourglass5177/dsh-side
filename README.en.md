@@ -32,9 +32,9 @@ The session surface reuses DSH's native components: message rows, composer, `+` 
 
 ## Context inheritance
 
-dsh-side forks the current conversation at event zero: the child inherits the workspace, directory and agent preset but copies no messages, so the transcript starts empty. Event zero of a session log is a configuration event (a permission preset or a subagent descriptor), so it renders no chat row.
+The side session id carries the parent id (`session-side-<parentSessionId>-<random>`), so the host resolves the source conversation from the id alone — no title, no query index, no polling, and no race with the first message.
 
-The context itself is injected: the host reads the parent's model-visible messages and writes them into the child as one context record. The transcript stays empty while the model can read the full context.
+It joins no workspace, which is why it never appears in the session list. The host reads the parent's model-visible messages and writes them into the child as one context record; the transcript stays empty while the model can read the full context.
 
 The record appears as a collapsed entry at the top of the panel; expanding it shows what was inherited.
 
@@ -76,7 +76,7 @@ Two entry points with the same result:
 
 Ask in the composer at the bottom; answers stream as usual. Continue asking in the same panel to keep the side session going.
 
-The side session never appears in the session list: it is detached from its workspace right after creation and keeps running (archiving would refuse it a model step).
+The side session never appears in the session list: it is created without a workspace, so no list collects it.
 
 **Closing the tab ends it**: the side session stops and its stored transcript is deleted (the whole session directory is removed).
 
@@ -87,7 +87,7 @@ The side session never appears in the session list: it is detached from its work
 | **No dependencies, no build** | No npm dependencies, no bundler, no compile step; DSH loads `client.js` and `index.js` directly. |
 | **Product UI reuse** | The panel renders `conversation.content`; the composer is `conversation.composer.bar`. |
 | **Unchanged session model** | No new event types, no changes to the main conversation, no subagent catalog entries; a side session is an ordinary session. |
-| **Inheritance by the runtime** | The side session is a fork of the current conversation at event zero; workspace, directory and preset come from the runtime, and the plugin resolves no workspace. |
+| **Parent carried in the id** | The child id embeds the parent id, so the host locates the source conversation by parsing the id; no title, index or polling is involved. |
 | **Size** | ~566 lines browser-side, ~326 lines host-side, commented JavaScript. |
 
 ## Known limits

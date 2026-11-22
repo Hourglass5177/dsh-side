@@ -148,10 +148,11 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
 
   command.ui.run({ sessionId: 'parent-1' })
   await settle()
-  check('forks at event zero', c.calls.fork.length === 1 && c.calls.create.length === 0, c.calls.fork)
-  check('cuts the parent at seq 0', c.calls.fork[0]?.sessionId === 'parent-1' && c.calls.fork[0]?.atSeq === 0, c.calls.fork[0])
-  check('inherits workspace and directory through the fork', c.calls.fork[0]?.workspaceId === undefined && c.calls.fork[0]?.cwd === undefined, c.calls.fork[0])
-  check('titles the side session with its parent', c.calls.renamed[0] === '〔side〕parent-1', c.calls.renamed)
+  check('creates the side session', c.calls.create.length === 1 && c.calls.fork.length === 0, c.calls.create)
+  check('embeds the parent in the session id', /^session-side-parent-1-[0-9a-f]{8}$/u.test(c.calls.create[0]?.sessionId ?? ''), c.calls.create[0]?.sessionId)
+  check('inherits the parent directory', c.calls.create[0]?.cwd === 'F:/work', c.calls.create[0])
+  check('attaches to no workspace', c.calls.create[0]?.workspaceId === undefined, c.calls.create[0])
+  check('no longer renames the session', c.calls.renamed.length === 0, c.calls.renamed)
   const address = c.calls.open[0]?.address
   check('opens the side panel', typeof address === 'string' && address.endsWith('/child-side-1'), address)
   check('opens the sidechat kind', c.calls.open[0]?.opts?.kind === 'sidechat', c.calls.open[0]?.opts)
@@ -194,7 +195,6 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   await settle()
   c.runClose('parent-1', { contentId: 'dsh-resource://sidechat/session/child-side-1' })
   await settle()
-  check('close retitles it as closed', c.calls.renamed.includes('〔side-closed〕'), c.calls.renamed)
   const closeCall = c.calls.archive.at(-1)
   check('close archives with stopActivity', closeCall?.sessionId === 'child-side-1'
     && closeCall?.opts?.stopActivity === true, closeCall)
@@ -203,11 +203,11 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
 
 // --- 4. failures are contained
 {
-  const failing = makeClient({ forkThrows: true })
+  const failing = makeClient({ createThrows: true })
   let threw = false
   try { failing.commands.side.ui.run({ sessionId: 'parent-1' }); await settle() } catch { threw = true }
-  check('fork failure does not throw', threw === false)
-  check('fork failure opens nothing', failing.calls.open.length === 0)
+  check('create failure does not throw', threw === false)
+  check('create failure opens nothing', failing.calls.open.length === 0)
 
   const noSurface = makeClient({ openThrows: true })
   noSurface.commands.side.ui.run({ sessionId: 'parent-1' })

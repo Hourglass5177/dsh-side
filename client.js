@@ -40,11 +40,11 @@ window.__ModuleLoader__.load({
     /** Parent-side reference source recorded by the resource provider. */
     const REFERENCE_SOURCE = 'sideChat'
 
-    /** Title marker the Host half watches: `〔side〕<parentSessionId>`. */
-    const SIDE_MARK = '〔side〕'
+    /** Prefix of every side Session id: `session-side-<parentSessionId>-<random>`. */
+    const SIDE_ID_PREFIX = 'session-side-'
 
-    /** Title a side session carries once its tab closed; the Host reaper deletes these. */
-    const SIDE_CLOSED_MARK = '〔side-closed〕'
+    /** Suffix that makes each side Session id unique. */
+    const SIDE_ID_SUFFIX = /^[0-9a-f]{8}$/u
 
     /** Localized copy namespace. */
     const NS = 'dsh-side'
@@ -204,9 +204,6 @@ window.__ModuleLoader__.load({
          */
         async function retire(sessionId) {
           forget(sessionId)
-          // Mark it closed first: the Host only reclaims storage for closed sessions,
-          // so a live one stays hidden without being deleted underneath its tab.
-          await renameSideSession(sessionId, SIDE_CLOSED_MARK)
           try {
             await ctx.uiWorkspace.archiveSession(sessionId, { stopActivity: true })
           } catch (error) {
@@ -215,8 +212,19 @@ window.__ModuleLoader__.load({
         }
 
         /**
-         * Rename a side Session while it is retained. The title is the only durable
-         * fact a browser can write that the Host observes without a slash command.
+         * Build the side Session id with the parent embedded, so the Host can find
+         * the source conversation from the id alone — no title read, no polling, no
+         * query index and no race with the first message.
+         * @param {string} parentSessionId - the thread it inherits from.
+         * @returns {string} the new Session id.
+         */
+        function sideSessionId(parentSessionId) {
+          const random = Math.random().toString(16).slice(2, 10).padEnd(8, '0')
+          return `${SIDE_ID_PREFIX}${parentSessionId}-${random}`
+        }
+
+        /**
+         * Rename a side Session while it is retained.
          * @param {string} sessionId - the side Session.
          * @param {string} title - new title.
          */
@@ -245,15 +253,6 @@ window.__ModuleLoader__.load({
               // Releasing twice is harmless.
             }
           }
-        }
-
-        /**
-         * Title the side Session the way the Host expects to find it.
-         * @param {string} sessionId - the new side Session.
-         * @param {string} parentSessionId - the thread it inherits from.
-         */
-        async function markSideSession(sessionId, parentSessionId) {
-          await renameSideSession(sessionId, `${SIDE_MARK}${parentSessionId}`)
         }
 
         /** @param {string} sessionId - side Session. */
@@ -309,16 +308,23 @@ window.__ModuleLoader__.load({
           const resource = typeof useResource === 'function' && typeof contentId === 'string'
             ? useResource(contentId)
             : undefined
+          // Pin the first reference: the resource publishes a new object on every
+          // tick, and handing a new identity to SessionProvider remounts the whole
+          // conversation — which shows up as flicker, collapsed tool details and a
+          // send/stop button that never reaches the live session.
+          const pinned = React.useRef(undefined)
+          const reference = resource?.value?.reference
+          if (pinned.current === undefined && reference !== undefined) pinned.current = reference
           if (typeof renderSlot !== 'function' || typeof SessionProvider !== 'function') {
             return h(Unavailable, {
               sessionId: sessionId ?? '', note: t('fallback.note'), open: t('fallback.open'), onOpen: openInMain,
             })
           }
-          if (resource?.value?.reference === undefined) return null
+          if (pinned.current === undefined) return null
           return h('div', {
             'data-side-chat': '',
             style: { display: 'flex', width: '100%', height: '100%', minWidth: 0, minHeight: 0 },
-          }, h(SessionProvider, { session: resource.value.reference }, renderSlot(CHAT_SLOT, {})))
+          }, h(SessionProvider, { session: pinned.current }, renderSlot(CHAT_SLOT, {})))
         }
 
         /**
@@ -456,11 +462,16 @@ window.__ModuleLoader__.load({
          */
         async function createSide(parentSessionId) {
           if (typeof parentSessionId !== 'string' || parentSessionId === '') return undefined
+          const row = ctx.sessions.list.getSnapshot().byId?.[parentSessionId]
           let childId
           try {
-            childId = await ctx.sessions.fork({ sessionId: parentSessionId, atSeq: 0 })
+            childId = await ctx.sessions.create({
+              sessionId: sideSessionId(parentSessionId),
+              ...(typeof row?.cwd === 'string' ? { cwd: row.cwd } : {}),
+              ...(typeof row?.agentPreset === 'string' ? { agentPreset: row.agentPreset } : {}),
+            })
           } catch (error) {
-            console.warn('[dsh-side] could not fork a side session:', error)
+            console.warn('[dsh-side] could not create a side session:', error)
             return undefined
           }
           if (typeof childId !== 'string' || childId === '') {
@@ -468,7 +479,6 @@ window.__ModuleLoader__.load({
             return undefined
           }
           remember(childId)
-          await markSideSession(childId, parentSessionId)
           return childId
         }
 

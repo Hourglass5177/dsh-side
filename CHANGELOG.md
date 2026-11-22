@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0]
+
+### Changed
+
+- The child session id now carries the parent id (`session-side-<parent>-<random>`).
+  The Host resolves the source conversation from the id alone, replacing the title
+  marker, the query-index read and the four-second poll. Context injection, the
+  permission copy and the workspace detach used to be skipped silently whenever that
+  lookup missed, which is why the side session kept starting empty.
+- A side session is created without a workspace, so it never enters the session list;
+  the archive-at-creation and detach paths are gone, and with them the archived-session
+  gate that refused every model step.
+
+### Fixed
+
+- The tab body pins the first session reference. A new identity on every resource tick
+  remounted the conversation, which showed as flicker, collapsed tool details and a
+  send/stop button that never reached the live session.
+
 ## [3.4.2]
 
 ### Fixed
