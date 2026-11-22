@@ -30,6 +30,12 @@ window.__ModuleLoader__.load({
     const TAB_ID = 'dsh-side/chat'
     const ADDRESS_PREFIX = `dsh-resource://${PROTOCOL}/session/`
 
+    /** Address prefix for a tab opened before its Session exists. */
+    const PENDING_PREFIX = `dsh-resource://${PROTOCOL}/pending/`
+
+    /** Nonce → in-flight creation, so the placeholder tab can wait for its Session. */
+    const pendingSides = new Map()
+
     /** Page tab type that backs the guide card; it hands off to a resource tab. */
     const PAGE_ID = 'dsh-side/new'
     const PAGE_KIND = 'sidechat-new'
@@ -62,6 +68,8 @@ window.__ModuleLoader__.load({
         'session.title': 'Side session',
         'guide.description': 'Open a temporary session beside this one',
         'guide.noSession': 'No conversation is open in this panel.',
+        'panel.creating': 'Starting the side session…',
+        'panel.failed': 'Could not start the side session.',
         'fallback.note': 'This panel could not load the conversation inline.',
         'fallback.open': 'Open in the main view',
       },
@@ -72,6 +80,8 @@ window.__ModuleLoader__.load({
         'session.title': '侧边会话',
         'guide.description': '在当前会话旁边，开一条临时会话',
         'guide.noSession': '这个面板当前没有打开的会话。',
+        'panel.creating': '正在创建侧边会话…',
+        'panel.failed': '创建侧边会话失败。',
         'fallback.note': '这个面板无法内嵌加载会话。',
         'fallback.open': '在主视图打开',
       },
@@ -89,10 +99,11 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * @param {unknown} address - possible side-chat resource address.
-     * @returns {string | undefined} the Session id, or undefined for anything else.
+     * @param {string} address - side-chat resource address.
+     * @param {string} kind - `session` or `pending`.
+     * @returns {string | undefined} the encoded id, or undefined for another address.
      */
-    function sessionIdOf(address) {
+    function resourcePartOf(address, kind) {
       if (typeof address !== 'string') return undefined
       let url
       try {
@@ -102,13 +113,36 @@ window.__ModuleLoader__.load({
       }
       if (url.protocol !== 'dsh-resource:' || url.hostname.toLowerCase() !== PROTOCOL) return undefined
       const parts = url.pathname.split('/').filter(Boolean)
-      if (parts.length !== 2 || parts[0] !== 'session') return undefined
+      if (parts.length !== 2 || parts[0] !== kind) return undefined
       try {
         const id = decodeURIComponent(parts[1])
         return id === '' ? undefined : id
       } catch (_invalidEncoding) {
         return undefined
       }
+    }
+
+    /** @param {string} nonce - creation nonce. @returns {string} its address. */
+    function addressOfPending(nonce) {
+      return `${PENDING_PREFIX}${encodeURIComponent(nonce)}`
+    }
+
+    /** @param {unknown} address - possible pending address. @returns {string | undefined} the nonce. */
+    function pendingNoteOf(address) {
+      return resourcePartOf(address, 'pending')
+    }
+
+    /** @returns {string} a short unique nonce. */
+    function createNonce() {
+      return `${Date.now().toString(36)}${Math.random().toString(16).slice(2, 10)}`
+    }
+
+    /**
+     * @param {unknown} address - possible side-chat resource address.
+     * @returns {string | undefined} the Session id, or undefined for anything else.
+     */
+    function sessionIdOf(address) {
+      return resourcePartOf(address, 'session')
     }
 
     /**
@@ -884,13 +918,18 @@ window.__ModuleLoader__.load({
           const { useResource, useTabInfo, renderSlot, SessionProvider } = props
           const info = typeof useTabInfo === 'function' ? useTabInfo() : undefined
           const contentId = info?.tab?.contentId
+          const nonce = pendingNoteOf(contentId)
           const sessionId = sessionIdOf(contentId)
+          const resource = typeof useResource === 'function' && typeof contentId === 'string'
+            ? useResource(contentId)
+            : undefined
           // The tab holds its own reference for the whole lifetime of the panel.
           // Reading the resource on every render handed SessionProvider a new identity
           // (or a released one) again and again, which showed up as flicker, collapsed
           // tool details and a stop button that never reached the live session.
           const [retained, setRetained] = React.useState(undefined)
           React.useEffect(() => {
+            if (nonce !== undefined) return undefined
             if (typeof sessionId !== 'string' || sessionId === '') return undefined
             let reference
             try {
@@ -907,17 +946,37 @@ window.__ModuleLoader__.load({
                 // Releasing twice is harmless.
               }
             }
-          }, [sessionId])
+          }, [nonce, sessionId])
+          // A pending tab has no Session yet; the provider yields one once the fork lands.
+          const reference = nonce === undefined ? retained : resource?.value?.reference
           if (typeof renderSlot !== 'function' || typeof SessionProvider !== 'function') {
             return h(Unavailable, {
               sessionId: sessionId ?? '', note: t('fallback.note'), open: t('fallback.open'), onOpen: openInMain,
             })
           }
-          if (retained === undefined) return null
+          if (nonce !== undefined && resource?.value?.failed === true) {
+            return h('div', {
+              style: {
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: '100%', height: '100%', opacity: 0.7,
+                fontSize: 'var(--dsh-content-font-size-secondary, 13px)',
+              },
+            }, t('panel.failed'))
+          }
+          if (reference === undefined) {
+            if (nonce === undefined) return null
+            return h('div', {
+              style: {
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: '100%', height: '100%', opacity: 0.6,
+                fontSize: 'var(--dsh-content-font-size-secondary, 13px)',
+              },
+            }, t('panel.creating'))
+          }
           return h('div', {
             'data-side-chat': '',
             style: { display: 'flex', width: '100%', height: '100%', minWidth: 0, minHeight: 0 },
-          }, h(SessionProvider, { session: retained }, renderSlot(TRANSCRIPT_SEAT, { sessionId })))
+          }, h(SessionProvider, { session: reference }, renderSlot(TRANSCRIPT_SEAT, { sessionId })))
         }
 
         /**
@@ -959,6 +1018,29 @@ window.__ModuleLoader__.load({
           scope.effect(() => guardSlot('side conversation resource', () => scope.resources.register({
             protocol: PROTOCOL,
             async *open(resourceAddress, { signal }) {
+              const nonce = pendingNoteOf(resourceAddress)
+              if (nonce !== undefined) {
+                const creation = pendingSides.get(nonce)
+                if (creation === undefined) return
+                const childId = await creation
+                pendingSides.delete(nonce)
+                if (signal.aborted) return
+                if (childId === undefined) {
+                  // Creation failed: keep the tab mounted with a visible reason instead of
+                  // an endless spinner.
+                  yield { ok: true, value: { failed: true } }
+                  await waitForAbort(signal)
+                  return
+                }
+                const reference = scope.sessions.retain(childId, { source: REFERENCE_SOURCE, signal })
+                try {
+                  yield { ok: true, value: { sessionId: childId, reference } }
+                  await waitForAbort(signal)
+                } finally {
+                  reference.release()
+                }
+                return
+              }
               const sessionId = sessionIdOf(resourceAddress)
               if (sessionId === undefined) {
                 throw new Error(`dsh-side: invalid side conversation address "${resourceAddress}"`)
@@ -977,9 +1059,9 @@ window.__ModuleLoader__.load({
           scope.effect(() => guardSlot('side conversation tab type', () => scope.sidebarRightTabs.register({
             id: TAB_ID,
             kind: KIND,
-            patterns: [`${ADDRESS_PREFIX}**`],
+            patterns: [`${ADDRESS_PREFIX}**`, `${PENDING_PREFIX}**`],
             priority: 'extension',
-            canOpen: address => sessionIdOf(address) !== undefined,
+            canOpen: address => sessionIdOf(address) !== undefined || pendingNoteOf(address) !== undefined,
             title: () => t('tab.title'),
           })), 'dsh-side: side conversation tab type')
 
@@ -1143,9 +1225,11 @@ window.__ModuleLoader__.load({
             return undefined
           }
           remember(childId)
+          // Title after the fact: the panel is already open, and a rename round trip must
+          // not delay it. The number is reserved before the async rename settles.
           const number = nextSideNumber()
-          await renameSideSession(childId, sideTitle(number))
           saveSideNumbers({ ...sideNumbers(), [childId]: number })
+          void renameSideSession(childId, sideTitle(number))
           return childId
         }
 
@@ -1153,14 +1237,19 @@ window.__ModuleLoader__.load({
          * Create the side Session and open it from the command surface.
          * @param {string} parentSessionId - the thread the command ran in.
          */
-        async function openSide(parentSessionId) {
-          const childId = await createSide(parentSessionId)
-          if (childId === undefined) return
+        function openSide(parentSessionId) {
+          // Open the tab before the Session exists: forking copies the parent's events
+          // and takes a moment, and a panel that appears at that speed feels broken.
+          const nonce = createNonce()
+          pendingSides.set(nonce, createSide(parentSessionId))
+          const creation = pendingSides.get(nonce)
           try {
-            ctx.sidebarRight.openResource(addressOf(childId), { kind: KIND, preferNewPane: true })
+            ctx.sidebarRight.openResource(addressOfPending(nonce), { kind: KIND, preferNewPane: true })
           } catch (error) {
             console.warn('[dsh-side] could not open the side conversation panel:', error)
-            void retire(childId)
+            pendingSides.delete(nonce)
+            // The forked Session has no panel now; retire it instead of leaking it.
+            void creation?.then(childId => { if (typeof childId === 'string') void retire(childId) })
           }
         }
 
@@ -1189,21 +1278,20 @@ window.__ModuleLoader__.load({
               return
             }
             setParent(sessionId)
-            void createSide(sessionId).then((childId) => {
-              if (childId === undefined) return
-              const address = addressOf(childId)
-              try {
-                const actions = info?.tab?.actions
-                if (typeof actions?.openResource === 'function') {
-                  actions.openResource(address, { replaceTab: true })
-                  return
-                }
-                ctx.sidebarRight.openResource(address, { kind: KIND, replaceTab: true })
-              } catch (error) {
-                console.warn('[dsh-side] could not hand the guide card off to the panel:', error)
-                void retire(childId)
+            const nonce = createNonce()
+            pendingSides.set(nonce, createSide(sessionId))
+            const address = addressOfPending(nonce)
+            try {
+              const actions = info?.tab?.actions
+              if (typeof actions?.openResource === 'function') {
+                actions.openResource(address, { replaceTab: true })
+                return
               }
-            })
+              ctx.sidebarRight.openResource(address, { kind: KIND, replaceTab: true })
+            } catch (error) {
+              console.warn('[dsh-side] could not hand the guide card off to the panel:', error)
+              pendingSides.delete(nonce)
+            }
           }, [info])
 
           if (parent === '') {

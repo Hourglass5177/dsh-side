@@ -167,7 +167,7 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   check('passes only the parent id', c.calls.fork[0]?.sessionId === 'parent-1' && Object.keys(c.calls.fork[0]).length === 1, c.calls.fork[0])
   check('titles the first side session', c.calls.renamed[0] === 'dsh-side:session.title', c.calls.renamed)
   const address = c.calls.open[0]?.address
-  check('opens the side panel', typeof address === 'string' && address.endsWith('/child-side-1'), address)
+  check('opens a placeholder tab before the fork lands', typeof address === 'string' && address.includes('/pending/'), address)
   check('opens the sidechat kind', c.calls.open[0]?.opts?.kind === 'sidechat', c.calls.open[0]?.opts)
   check('remembers the child for cleanup', JSON.parse(store.get('dsh-side.sessions.v1') ?? '[]').includes('child-side-1'))
   check('does not archive the new session', c.calls.archive.length === 0, c.calls.archive)
@@ -191,6 +191,21 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   reopened.commands.side.ui.run({ sessionId: 'parent-1' })
   await settle()
   check('starts again at 1 after a deletion', reopened.calls.renamed[0] === 'dsh-side:session.title', reopened.calls.renamed)
+}
+
+// --- 1a. the placeholder resource resolves into the real session
+{
+  store.clear()
+  const c = makeClient({ childId: 'child-pending-1' })
+  c.commands.side.ui.run({ sessionId: 'parent-1' })
+  await settle()
+  const provider = c.calls.resources[0]
+  check('registers a resource provider', provider !== undefined, c.calls.resources.length)
+  const controller = new AbortController()
+  const iterator = provider.open(c.calls.open[0].address, { signal: controller.signal })
+  const first = await iterator.next()
+  check('resolves the placeholder to the forked session', first.value?.value?.sessionId === 'child-pending-1', first.value)
+  controller.abort()
 }
 
 // --- 2. the tab renders the product's conversation, declares no custom renderer
@@ -270,12 +285,12 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   let threw = false
   try { failing.commands.side.ui.run({ sessionId: 'parent-1' }); await settle() } catch { threw = true }
   check('fork failure does not throw', threw === false)
-  check('fork failure opens nothing', failing.calls.open.length === 0)
+  check('a failed fork keeps the tab with a failure state', failing.calls.open.length === 1 && failing.calls.archive.length === 0, failing.calls.archive)
 
   const noSurface = makeClient({ openThrows: true })
   noSurface.commands.side.ui.run({ sessionId: 'parent-1' })
   await settle()
-  check('panel failure archives the orphan', noSurface.calls.archive[0]?.sessionId === 'child-side-1', noSurface.calls.archive)
+  check('panel failure retires the orphaned fork', noSurface.calls.archive.some(entry => entry.sessionId === 'child-side-1'), noSurface.calls.archive)
 
   const rejected = makeClient({ rejectSlots: true })
   check('command survives a rejected slot seat', rejected.commands.side !== undefined)
