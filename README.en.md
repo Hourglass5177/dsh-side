@@ -20,18 +20,14 @@ The session surface reuses DSH's native components: message rows, composer, `+` 
 
 ## Screens
 
-The panel as opened: empty above, the built-in composer below.
-
 <p align="center">
-  <img src="docs/panel.png" alt="A temporary side session in the right sidebar: empty above, the built-in DSH composer below" width="360">
+  <img src="docs/panel.png" alt="A temporary side session: empty above, the built-in DSH composer below" width="300">
+  &nbsp;&nbsp;
+  <img src="docs/entry.png" alt="The Side session card on the right sidebar's start page" width="300">
 </p>
 
-The two entry points:
-
 <p align="center">
-  <img src="docs/entry.png" alt="The Side session card on the right sidebar's start page" width="300">
-  &nbsp;&nbsp;
-  <img src="docs/command.png" alt="The Side session row in the slash-command list" width="480">
+  <img src="docs/command.png" alt="The Side session row in the slash-command list">
 </p>
 
 ## Context inheritance
