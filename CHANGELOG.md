@@ -9,6 +9,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2]
+
+### Fixed
+
+- The panel renders `conversation.content` with the shell props only. Supplying a
+  custom `slots.views` replaced the product's own conversation wiring, which is what
+  made the panel flicker, leave tool details unexpandable, ignore the stop button, and
+  reflow slowly when the sidebar was resized.
+
 ## [1.2.1]
 
 ### Fixed

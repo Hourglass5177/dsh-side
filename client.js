@@ -281,27 +281,18 @@ window.__ModuleLoader__.load({
 
         /** Official presentation; receives the framework-injected hooks as props. */
         function OfficialChatInner(props) {
-          const { sessionId, useSession, useConversation, useSessions, renderFactorySlot } = props
+          const { useSession, renderFactorySlot } = props
           const session = useSession(value => value)
-          const conversation = useConversation(value => value)
-          const summaryBlank = typeof useSessions === 'function'
-            ? useSessions(state => state.byId?.[sessionId]?.blank)
-            : undefined
-          const active = (conversation?.activeTargets?.size ?? 0) > 0
-            || (!session.blank && !session.awaitingFirstTurn)
-            || session.running
-          const shellPhase = active ? 'active' : session.promptAttempted ? 'engaging' : 'blank'
-          const settling = shellPhase === 'blank' && session.openState === 'loading' && summaryBlank !== true
-          // This panel is a side chat, not a new-conversation screen: never render
-          // the product's hero (brand mark + workspace picker) and never show the
-          // blank-phase placeholder. The transcript stays empty and only the docked
-          // composer shows, exactly like a side chat.
-          const hero = false
-          const phase = settling ? 'settling' : shellPhase === 'blank' ? 'active' : shellPhase
-          const views = (viewProps) => h(React.Fragment, null, viewProps.renderSlot('conversation.session', { view: 'chat' }))
-          return renderFactorySlot('conversation.content', { variant: 'embedded', phase, hero }, {
-            slots: { views },
-          })
+          const loading = session?.openState === 'loading'
+          const blank = session?.blank !== false && session?.awaitingFirstTurn !== false
+          // This panel is a side chat, not a new-conversation screen: it never renders
+          // the hero (brand mark and workspace picker), so the transcript stays empty
+          // and only the docked composer shows.
+          const phase = loading && blank ? 'settling' : 'active'
+          // Pass only the shell props. Supplying a custom `slots.views` here replaced the
+          // product's own conversation views wiring, which made the panel flicker and
+          // left its tool rows and stop button inert.
+          return renderFactorySlot('conversation.content', { variant: 'embedded', phase, hero: false })
         }
 
         /** The Sidebar tab body: bind the resource's Session and render the product UI. */
