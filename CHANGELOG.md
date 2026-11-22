@@ -9,6 +9,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0]
+
+### Changed
+
+- `/side` now creates a **real fork** (`sessions.fork({ sessionId })`): the child owns the
+  parent's events verbatim, so the model context is lossless — roles, tool calls,
+  reasoning, permission selections included. The text-injection path, its 60k truncation
+  and the online/offline split are gone.
+- The panel renders a **Conversation view target registered by this plugin**: everything
+  up to `session/end-seed` is filtered out, so the inherited history never appears, while
+  the shell and composer stay the product's own.
+- The Host half is now only the closed-session reaper; it recognises side sessions by
+  their 「侧边会话」/「Side session」 title and reclaims archived ones.
+
+### Known limits
+
+- The transcript (message, tool and reasoning rows) is drawn by the plugin.
+- Streaming is not wired yet; answers appear when the message lands.
+
 ## [1.2.3]
 
 ### Changed

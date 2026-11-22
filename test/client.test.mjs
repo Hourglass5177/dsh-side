@@ -55,7 +55,7 @@ function disposeLive() {
 function makeClient(options = {}) {
   const calls = {
     create: [], fork: [], open: [], archive: [], renamed: [], registrations: [],
-    slotInjects: [], injected: [], resources: [], tabs: [], archived: [],
+    slotInjects: [], injected: [], resources: [], tabs: [], archived: [], views: [], eventDefinitions: [],
   }
   const effects = []
   const commands = {}
@@ -64,6 +64,11 @@ function makeClient(options = {}) {
   const locale = {
     register() { return () => {} },
     bind(namespace) { return key => `${namespace}:${key}` },
+  }
+
+  const ctxUiConversation = {
+    views: { register(definition) { calls.views.push(definition); return () => {} } },
+    events: { register(definition) { calls.eventDefinitions.push(definition); return () => {} } },
   }
 
   const byId = { 'parent-1': { workspaceId: 'ws-1', cwd: 'F:/work' } }
@@ -79,7 +84,9 @@ function makeClient(options = {}) {
     async fork(request) {
       calls.fork.push(request)
       if (options.forkThrows) throw new Error('fork failed')
-      return options.childId ?? 'child-side-1'
+      const childId = options.childIds !== undefined ? options.childIds.shift() : (options.childId ?? 'child-side-1')
+      byId[childId] = { cwd: 'F:/work', blank: true }
+      return childId
     },
     retain(target, opts) {
       calls.retained = { target, opts }
@@ -93,6 +100,7 @@ function makeClient(options = {}) {
 
   const scope = {
     sessions,
+    uiConversation: ctxUiConversation,
     resources: { register(provider) { calls.resources.push(provider); return () => {} } },
     sidebarRightTabs: { register(definition) { calls.tabs.push(definition); return () => {} } },
     slots: {
@@ -118,6 +126,10 @@ function makeClient(options = {}) {
       return { list: { getSnapshot: () => ({ items: [{ workspaceId: 'ws-1', sessionIds: ['parent-1'] }, { workspaceId: 'ws-2', sessionIds: [] }] }) } }
     },
     commandUi: { register(contribution) { commands[contribution.name] = contribution; return () => {} } },
+    uiConversation: {
+      views: { register(definition) { calls.views.push(definition); return () => {} } },
+      events: { register(definition) { calls.eventDefinitions.push(definition); return () => {} } },
+    },
     sidebarRight: {
       openResource(address, opts) {
         if (options.openThrows) throw new Error('no surface')
@@ -151,10 +163,8 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
 
   command.ui.run({ sessionId: 'parent-1' })
   await settle()
-  check('creates the side session', c.calls.create.length === 1 && c.calls.fork.length === 0, c.calls.create)
-  check('embeds the parent in the session id', /^session-side-parent-1-[0-9a-f]{8}$/u.test(c.calls.create[0]?.sessionId ?? ''), c.calls.create[0]?.sessionId)
-  check('inherits the parent directory', c.calls.create[0]?.cwd === 'F:/work', c.calls.create[0])
-  check('leaves the workspace to the host', c.calls.create[0]?.workspaceId === undefined, c.calls.create[0])
+  check('forks the parent conversation', c.calls.fork.length === 1 && c.calls.create.length === 0, c.calls.fork)
+  check('passes only the parent id', c.calls.fork[0]?.sessionId === 'parent-1' && Object.keys(c.calls.fork[0]).length === 1, c.calls.fork[0])
   check('titles the first side session', c.calls.renamed[0] === 'dsh-side:session.title', c.calls.renamed)
   const address = c.calls.open[0]?.address
   check('opens the side panel', typeof address === 'string' && address.endsWith('/child-side-1'), address)
@@ -172,7 +182,7 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   client.commands.side.ui.run({ sessionId: 'parent-1' })
   await settle()
   check('numbers the second side session', client.calls.renamed[1] === 'dsh-side:session.title（2）', client.calls.renamed)
-  check('both inherit the parent directory', client.calls.create.every(call => call.cwd === 'F:/work'), client.calls.create)
+  check('both fork the same parent', client.calls.fork.every(call => call.sessionId === 'parent-1'), client.calls.fork)
 
   // Deleting the first frees its number: the next panel takes it again.
   disposeLive()
@@ -190,10 +200,28 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
   check('tab body declares only its conversation child', JSON.stringify(Object.keys(body?.children ?? {})) === '["side.chat.conversation"]', body?.children)
   const title = c.calls.registrations.find(r => r.name === 'sidebar.right.pane.tab.title')
   check('registers the chip title component', title?.key === 'dsh-side/chat', title)
-  check('no Conversation target is registered', !c.calls.injected.some(deps => deps.includes('uiConversation')), c.calls.injected)
+  check('injects the conversation service for the transcript', c.calls.injected.some(deps => deps.includes('uiConversation')), c.calls.injected)
   check('content seat registered', c.calls.registrations.some(r => r.name === 'side.chat.conversation'))
   const tab = c.calls.tabs[0]
   check('tab type still opens our addresses', tab?.canOpen('dsh-resource://sidechat/session/x') === true)
+}
+
+// --- 2a. the side transcript target is registered
+{
+  const c = makeClient()
+  check('registers the side view target', c.calls.views.some(v => v.target === 'side' && typeof v.create === 'function'), c.calls.views.map(v => v.target))
+  const kinds = c.calls.eventDefinitions.map(d => d.kind)
+  check('registers the seed boundary definition', kinds.includes('side-seed'), kinds)
+  check('registers user/assistant/tool definitions', kinds.includes('side-user') && kinds.includes('side-assistant') && kinds.includes('side-tool'), kinds)
+  const builder = c.calls.views[0]?.create()
+  check('builder publishes an empty snapshot', Array.isArray(builder?.empty?.nodes) && builder.empty.inherited === 0, builder?.empty)
+  builder?.replace?.({ nodes: [
+    { key: 'seed', kind: 'side-seed', id: 'seed', target: 'side', data: { seq: 5 } },
+    { key: 'user:1', kind: 'side-user', id: '1', target: 'side', data: { seq: 3, text: 'older' } },
+    { key: 'user:2', kind: 'side-user', id: '2', target: 'side', data: { seq: 7, text: 'own' } },
+  ], timeline: {} })
+  const snapshot = builder.replace({ nodes: [], timeline: {} })
+  check('drops the inherited prefix', Array.isArray(snapshot?.nodes) && snapshot.nodes.length === 0, snapshot)
 }
 
 // --- 2b. the start page carries our card and its page type
@@ -226,11 +254,11 @@ const settle = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms))
 
 // --- 4. failures are contained
 {
-  const failing = makeClient({ createThrows: true })
+  const failing = makeClient({ forkThrows: true })
   let threw = false
   try { failing.commands.side.ui.run({ sessionId: 'parent-1' }); await settle() } catch { threw = true }
-  check('create failure does not throw', threw === false)
-  check('create failure opens nothing', failing.calls.open.length === 0)
+  check('fork failure does not throw', threw === false)
+  check('fork failure opens nothing', failing.calls.open.length === 0)
 
   const noSurface = makeClient({ openThrows: true })
   noSurface.commands.side.ui.run({ sessionId: 'parent-1' })

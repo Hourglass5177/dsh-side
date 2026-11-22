@@ -40,10 +40,6 @@ window.__ModuleLoader__.load({
     /** Parent-side reference source recorded by the resource provider. */
     const REFERENCE_SOURCE = 'sideChat'
 
-    /** Prefix of every side Session id: `session-side-<parentSessionId>-<random>`. */
-    const SIDE_ID_PREFIX = 'session-side-'
-
-    /** Suffix that makes each side Session id unique. */
     const SIDE_ID_SUFFIX = /^[0-9a-f]{8}$/u
 
     /** Localized copy namespace. */
@@ -222,18 +218,6 @@ window.__ModuleLoader__.load({
         }
 
         /**
-         * Build the side Session id with the parent embedded, so the Host can find
-         * the source conversation from the id alone — no title read, no polling, no
-         * query index and no race with the first message.
-         * @param {string} parentSessionId - the thread it inherits from.
-         * @returns {string} the new Session id.
-         */
-        function sideSessionId(parentSessionId) {
-          const random = Math.random().toString(16).slice(2, 10).padEnd(8, '0')
-          return `${SIDE_ID_PREFIX}${parentSessionId}-${random}`
-        }
-
-        /**
          * Rename a side Session while it is retained.
          * @param {string} sessionId - the side Session.
          * @param {string} title - new title.
@@ -274,7 +258,270 @@ window.__ModuleLoader__.load({
           }
         }
 
-        /** The product's own conversation content, hosted inside this tab. */
+        // ------------------------------------------------------------------
+        // Side transcript: a Conversation target that renders only what this
+        // side session itself recorded. The fork inherited the parent prefix,
+        // so everything up to `session/end-seed` is dropped here instead of in
+        // the model context — the agent keeps the full, lossless history.
+        // ------------------------------------------------------------------
+
+        /** Registered Conversation view target for the side transcript. */
+        const SIDE_TARGET = 'side'
+
+        /** Conversation service, captured once the client can see it. */
+        let conversation = undefined
+
+        /** @param {unknown} content - message content blocks. @returns {string} text. */
+        function blockText(content, type) {
+          if (!Array.isArray(content)) return ''
+          let text = ''
+          for (const block of content) {
+            if (block?.type === type && typeof block.text === 'string') text += block.text
+          }
+          return text.trim()
+        }
+
+        /**
+         * @param {object} source - ObservableSnapshot source.
+         * @returns {unknown} its current snapshot.
+         */
+        function useObservable(source) {
+          const subscribe = React.useCallback(
+            listener => (source === undefined ? () => {} : source.subscribe(listener)),
+            [source],
+          )
+          const getSnapshot = React.useCallback(
+            () => (source === undefined ? undefined : source.getSnapshot()),
+            [source],
+          )
+          return React.useSyncExternalStore(subscribe, getSnapshot)
+        }
+
+        /**
+         * One node per renderable event. The fork boundary is cut in the builder, so the
+         * inherited prefix never materializes as rows.
+         * @returns {object[]} Definitions registered against the side target.
+         */
+        function sideDefinitions() {
+          const seed = {
+            kind: 'side-seed',
+            target: SIDE_TARGET,
+            match: event => (event?.type === 'session/end-seed' ? { id: 'seed', role: 'start' } : null),
+            start: (_context, match) => ({ id: 'seed', seq: match.event.seq ?? 0 }),
+            update: (_context, match) => ({ id: 'seed', seq: match.event.seq ?? 0 }),
+            buildViewNode: () => null,
+          }
+          const user = {
+            kind: 'side-user',
+            target: SIDE_TARGET,
+            match: event => (event?.type === 'user/message' && event.data?.source?.kind === 'user'
+              ? { id: String(event.data?.id ?? event.seq), role: 'start' }
+              : null),
+            start: (_context, match) => ({
+              id: String(match.event.data?.id ?? match.event.seq),
+              seq: match.event.seq ?? 0,
+              text: blockText(match.event.data?.content, 'text'),
+              time: match.event.time ?? 0,
+            }),
+            update: (_context, match) => ({
+              id: String(match.event.data?.id ?? match.event.seq),
+              seq: match.event.seq ?? 0,
+              text: blockText(match.event.data?.content, 'text'),
+              time: match.event.time ?? 0,
+            }),
+            buildViewNode: context => (context.state === undefined || context.state.text === ''
+              ? null
+              : { key: `side-user:${context.state.id}`, kind: 'side-user', id: context.state.id, target: SIDE_TARGET, data: context.state }),
+          }
+          const assistant = {
+            kind: 'side-assistant',
+            target: SIDE_TARGET,
+            match: event => (event?.type === 'assistant/message'
+              ? { id: String(event.seq), role: 'start' }
+              : null),
+            start: (_context, match) => ({
+              id: String(match.event.seq),
+              seq: match.event.seq ?? 0,
+              text: blockText(match.event.data?.message?.content, 'text'),
+              reasoning: blockText(match.event.data?.message?.content, 'reasoning'),
+              time: match.event.time ?? 0,
+            }),
+            update: (_context, match) => ({
+              id: String(match.event.seq),
+              seq: match.event.seq ?? 0,
+              text: blockText(match.event.data?.message?.content, 'text'),
+              reasoning: blockText(match.event.data?.message?.content, 'reasoning'),
+              time: match.event.time ?? 0,
+            }),
+            buildViewNode: context => (context.state === undefined
+              ? null
+              : { key: `side-assistant:${context.state.id}`, kind: 'side-assistant', id: context.state.id, target: SIDE_TARGET, data: context.state }),
+          }
+          const tool = {
+            kind: 'side-tool',
+            target: SIDE_TARGET,
+            match: event => {
+              if (event?.type === 'tool/call') return { id: String(event.data?.callId ?? event.seq), role: 'start' }
+              if (event?.type === 'tool/result') return { id: String(event.data?.toolCallId ?? event.data?.message?.toolCallId ?? event.seq), role: 'update' }
+              return null
+            },
+            start: (_context, match) => ({
+              id: String(match.event.data?.callId ?? match.event.seq),
+              seq: match.event.seq ?? 0,
+              name: String(match.event.data?.name ?? 'tool'),
+              args: typeof match.event.data?.arguments === 'string' ? match.event.data.arguments : '',
+              result: '',
+            }),
+            update: (context, match) => ({
+              ...context.state,
+              result: blockText(match.event.data?.message?.content, 'text'),
+            }),
+            buildViewNode: context => (context.state === undefined
+              ? null
+              : { key: `side-tool:${context.state.id}`, kind: 'side-tool', id: context.state.id, target: SIDE_TARGET, data: context.state }),
+          }
+          return [seed, user, assistant, tool]
+        }
+
+        /**
+         * Incremental builder for the side target: keeps the seed boundary and publishes
+         * only the nodes recorded after it.
+         * @returns {object} ConversationViewBuilder.
+         */
+        function createSideBuilder() {
+          let nodes = []
+          const publish = () => {
+            let boundary = -1
+            for (const node of nodes) {
+              if (node.kind === 'side-seed') boundary = Math.max(boundary, node.data?.seq ?? -1)
+            }
+            const visible = boundary < 0 ? nodes : nodes.filter(node => (node.data?.seq ?? 0) > boundary)
+            return { nodes: visible, inherited: boundary < 0 ? 0 : nodes.length - visible.length }
+          }
+          return {
+            empty: { nodes: [], inherited: 0 },
+            replace(input) {
+              nodes = [...(input?.nodes ?? [])].sort((left, right) => (left.data?.seq ?? 0) - (right.data?.seq ?? 0))
+              return publish()
+            },
+            apply(input) {
+              const byKey = new Map(nodes.map(node => [node.key, node]))
+              for (const node of input?.upserts ?? []) byKey.set(node.key, node)
+              nodes = [...byKey.values()].sort((left, right) => (left.data?.seq ?? 0) - (right.data?.seq ?? 0))
+              return publish()
+            },
+            isActive: () => false,
+          }
+        }
+
+        /** Register the target once the Conversation service exists. */
+        function registerConversationTarget(scope) {
+          conversation = scope.uiConversation
+          scope.effect(() => guardSlot('side conversation target', () => scope.uiConversation.views.register({
+            target: SIDE_TARGET,
+            create: () => createSideBuilder(),
+          })), 'dsh-side: side conversation target')
+          for (const definition of sideDefinitions()) {
+            scope.effect(() => guardSlot(`side ${definition.kind} node`, () => scope.uiConversation.events.register(definition)),
+              `dsh-side: ${definition.kind} node`)
+          }
+        }
+
+        /** One collapsible block used for reasoning and tool output. */
+        function Disclosure({ summary, children, defaultOpen }) {
+          const [open, setOpen] = React.useState(Boolean(defaultOpen))
+          return h('div', { style: { margin: '6px 0' } },
+            h('button', {
+              type: 'button',
+              onClick: () => setOpen(value => !value),
+              style: {
+                display: 'flex', alignItems: 'center', gap: '6px', width: '100%', textAlign: 'left',
+                padding: '4px 8px', border: 'none', borderRadius: 'var(--dsw-radius-md, 8px)',
+                background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer',
+                opacity: 0.75,
+              },
+            }, h('span', { style: { fontSize: '11px' } }, open ? '▾' : '▸'), summary),
+            open ? h('div', { style: { padding: '4px 12px 8px', whiteSpace: 'pre-wrap', opacity: 0.85 } }, children) : null,
+          )
+        }
+
+        /** The side panel transcript: only what this session recorded after the fork cut. */
+        function SideTranscript(props) {
+          const sessionId = typeof props.sessionId === 'string' ? props.sessionId : undefined
+          const source = React.useMemo(() => {
+            if (conversation === undefined || sessionId === undefined) return undefined
+            try {
+              return conversation.binding(sessionId).target(SIDE_TARGET)
+            } catch (error) {
+              console.warn('[dsh-side] could not open the side transcript target:', error)
+              return undefined
+            }
+          }, [sessionId])
+          const snapshot = useObservable(source)
+          const nodes = Array.isArray(snapshot?.nodes) ? snapshot.nodes : []
+          const inherited = typeof snapshot?.inherited === 'number' ? snapshot.inherited : 0
+          const bottom = React.useRef(null)
+
+          React.useEffect(() => {
+            const element = bottom.current
+            if (element !== null && typeof element.scrollIntoView === 'function') {
+              element.scrollIntoView({ block: 'end' })
+            }
+          }, [nodes.length])
+
+          return h('div', {
+            style: {
+              display: 'flex', flexDirection: 'column', width: '100%', height: '100%',
+              minWidth: 0, minHeight: 0, overflow: 'auto',
+            },
+          },
+          h('div', {
+            style: {
+              display: 'flex', flexDirection: 'column', gap: 'var(--dsh-assistant-block-gap, 16px)',
+              width: '100%', maxWidth: 'var(--dsh-chat-content-width, 748px)',
+              margin: '0 auto', padding: '12px 16px 24px', boxSizing: 'border-box',
+              fontSize: 'var(--dsh-content-font-size, 14px)', lineHeight: 1.65,
+            },
+          },
+          inherited > 0
+            ? h('div', {
+              style: {
+                alignSelf: 'center', padding: '2px 10px', borderRadius: '999px',
+                fontSize: 'var(--dsh-content-font-size-secondary, 13px)', opacity: 0.55,
+                border: '1px dashed var(--dsw-alias-line, rgba(127,127,127,0.4))',
+              },
+            }, `已继承 ${inherited} 条历史`)
+            : null,
+          ...nodes.map(node => {
+            const data = node.data ?? {}
+            if (node.kind === 'side-user') {
+              return h('div', { key: node.key, style: { display: 'flex', justifyContent: 'flex-end' } },
+                h('div', {
+                  style: {
+                    maxWidth: '82%', padding: '8px 12px', borderRadius: '14px',
+                    background: 'var(--dsw-specific-input-major, rgba(127,127,127,0.14))',
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                  },
+                }, data.text))
+            }
+            if (node.kind === 'side-assistant') {
+              return h('div', { key: node.key, style: { display: 'flex', flexDirection: 'column' } },
+                data.reasoning !== ''
+                  ? h(Disclosure, { key: 'reasoning', summary: '思考过程' }, data.reasoning)
+                  : null,
+                h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, data.text))
+            }
+            if (node.kind === 'side-tool') {
+              return h(Disclosure, { key: node.key, summary: `工具调用 · ${data.name}` },
+                `${data.args}${data.result === '' ? '' : `\n\n${data.result}`}`)
+            }
+            return null
+          }),
+          h('div', { key: 'bottom', ref: bottom }),
+          ))
+        }
+
+        /** The product's own conversation shell, with our transcript in its view position. */
         function OfficialChatPanel(props) {
           if (typeof props.renderFactorySlot !== 'function' || typeof props.useSession !== 'function') {
             return h(Unavailable, {
@@ -284,20 +531,20 @@ window.__ModuleLoader__.load({
           return h(OfficialChatInner, props)
         }
 
-        /** Official presentation; receives the framework-injected hooks as props. */
+        /** Official shell and composer; only the transcript position is ours. */
         function OfficialChatInner(props) {
-          const { useSession, renderFactorySlot } = props
+          const { useSession, renderFactorySlot, sessionId } = props
           const session = useSession(value => value)
           const loading = session?.openState === 'loading'
           const blank = session?.blank !== false && session?.awaitingFirstTurn !== false
-          // This panel is a side chat, not a new-conversation screen: it never renders
-          // the hero (brand mark and workspace picker), so the transcript stays empty
-          // and only the docked composer shows.
           const phase = loading && blank ? 'settling' : 'active'
-          // Pass only the shell props. Supplying a custom `slots.views` here replaced the
-          // product's own conversation views wiring, which made the panel flicker and
-          // left its tool rows and stop button inert.
-          return renderFactorySlot('conversation.content', { variant: 'embedded', phase, hero: false })
+          const views = React.useMemo(() => {
+            const Views = viewProps => h(SideTranscript, { ...viewProps, sessionId })
+            return Views
+          }, [sessionId])
+          return renderFactorySlot('conversation.content', { variant: 'embedded', phase, hero: false }, {
+            slots: { views },
+          })
         }
 
         /** The Sidebar tab body: bind the resource's Session and render the product UI. */
@@ -338,7 +585,7 @@ window.__ModuleLoader__.load({
           return h('div', {
             'data-side-chat': '',
             style: { display: 'flex', width: '100%', height: '100%', minWidth: 0, minHeight: 0 },
-          }, h(SessionProvider, { session: retained }, renderSlot(CHAT_SLOT, {})))
+          }, h(SessionProvider, { session: retained }, renderSlot(CHAT_SLOT, { sessionId })))
         }
 
         /**
@@ -447,6 +694,7 @@ window.__ModuleLoader__.load({
         }
 
         ctx.inject(['resources', 'sidebarRightTabs'], scope => registerTab(scope))
+        ctx.inject(['uiConversation'], scope => registerConversationTarget(scope))
 
         // Closing the panel ends the side conversation: stop the run and archive it,
         // so it leaves the Session list instead of lingering as a running orphan.
@@ -548,18 +796,14 @@ window.__ModuleLoader__.load({
          */
         async function createSide(parentSessionId) {
           if (typeof parentSessionId !== 'string' || parentSessionId === '') return undefined
-          const row = ctx.sessions.list.getSnapshot().byId?.[parentSessionId]
           let childId
           try {
-            childId = await ctx.sessions.create({
-              sessionId: sideSessionId(parentSessionId),
-              // The workspace is attached by the Host once the session exists: the
-              // browser half has no reliable way to name the parent's workspace.
-              ...(typeof row?.cwd === 'string' ? { cwd: row.cwd } : {}),
-              ...(typeof row?.agentPreset === 'string' ? { agentPreset: row.agentPreset } : {}),
-            })
+            // A real fork: the child inherits the parent's events verbatim (roles, tool
+            // calls, reasoning), so the model context is lossless. The transcript hides
+            // that prefix instead of the context.
+            childId = await ctx.sessions.fork({ sessionId: parentSessionId })
           } catch (error) {
-            console.warn('[dsh-side] could not create a side session:', error)
+            console.warn('[dsh-side] could not fork a side session:', error)
             return undefined
           }
           if (typeof childId !== 'string' || childId === '') {
