@@ -9,6 +9,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1]
+
+### Changed
+
+- `/side` opens the panel before the forking Session exists: a placeholder tab appears
+  immediately, the fork runs in the background, and the same tab attaches when it lands.
+  The title rename also moved off the critical path.
+- A failed creation keeps the tab with a visible 「创建侧边会话失败。」 state; a panel that
+  cannot open retires the forked Session instead of leaking it.
+
 ## [1.4.0]
 
 ### Added
