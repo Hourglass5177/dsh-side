@@ -34,7 +34,7 @@ The session surface reuses DSH's native components: message rows, composer, `+` 
 
 The side session id carries the parent id (`session-side-<parentSessionId>-<random>`), so the host resolves the source conversation from the id alone — no title, no query index, no polling, and no race with the first message.
 
-It joins no workspace, which is why it never appears in the session list. The host reads the parent's model-visible messages and writes them into the child as one context record; the transcript stays empty while the model can read the full context.
+It joins the parent conversation workspace, so the composer workspace chip and the Workspace files page keep working. The host reads the parent's model-visible messages and writes them into the child as one context record; the transcript stays empty while the model can read the full context.
 
 The record appears as a collapsed entry at the top of the panel; expanding it shows what was inherited.
 
@@ -76,7 +76,7 @@ Two entry points with the same result:
 
 Ask in the composer at the bottom; answers stream as usual. Continue asking in the same panel to keep the side session going.
 
-The side session never appears in the session list: it is created without a workspace, so no list collects it.
+The side session joins the workspace of the conversation it was started from, titled 「Side session」, then 「Side session（2）」, 「Side session（3）」 for the next ones in the same workspace.
 
 **Closing the tab ends it**: the side session stops and its stored transcript is deleted (the whole session directory is removed).
 

@@ -9,6 +9,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0]
+
+### Changed
+
+- A side session joins the workspace of the conversation it was started from, so the
+  composer workspace chip and the Workspace files page work again.
+- New sessions are titled 「侧边会话」, then 「侧边会话（2）」, 「侧边会话（3）」 for each
+  further one; the counter is per browser and monotonic.
+
 ## [3.5.1]
 
 ### Fixed

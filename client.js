@@ -52,6 +52,9 @@ window.__ModuleLoader__.load({
     /** Record of live side Sessions, so a crash or reload cannot leak them. */
     const STORAGE_KEY = 'dsh-side.sessions.v1'
 
+    /** Monotonic counter behind 「侧边会话（2）」 titles. */
+    const TITLE_COUNTER_KEY = 'dsh-side.title-counter.v1'
+
     /** Wait before reconciling orphans; the Sidebar restores tabs during boot. */
     const RECONCILE_DELAY_MS = 2500
 
@@ -60,6 +63,7 @@ window.__ModuleLoader__.load({
         'command.label': 'Side session',
         'command.description': 'Start a temporary side session that inherits the current context',
         'tab.title': 'Side session',
+        'session.title': 'Side session',
         'guide.description': 'Open a temporary session beside this one',
         'guide.noSession': 'No conversation is open in this panel.',
         'fallback.note': 'This panel could not load the conversation inline.',
@@ -69,6 +73,7 @@ window.__ModuleLoader__.load({
         'command.label': '侧边会话',
         'command.description': '发起临时侧边会话，继承当前上下文',
         'tab.title': '侧边会话',
+        'session.title': '侧边会话',
         'guide.description': '在当前会话旁边，开一条临时会话',
         'guide.noSession': '这个面板当前没有打开的会话。',
         'fallback.note': '这个面板无法内嵌加载会话。',
@@ -450,6 +455,54 @@ window.__ModuleLoader__.load({
         }, 'dsh-side: close cleanup')
 
         /**
+         * Find the Workspace the parent conversation belongs to. A side session joins
+         * it, so the composer shows the project and the workspace file page works.
+         * @param {string} parentSessionId - the thread being sided.
+         * @returns {string | undefined} Workspace id.
+         */
+        function workspaceIdOf(parentSessionId) {
+          let service
+          try {
+            service = ctx.workspaces ?? ctx.get?.('workspaces')
+          } catch (_noWorkspaces) {
+            return undefined
+          }
+          try {
+            const items = service?.list?.getSnapshot?.()?.items
+            if (!Array.isArray(items)) return undefined
+            const owning = items.find(item => Array.isArray(item?.sessionIds)
+              && item.sessionIds.includes(parentSessionId))
+            return typeof owning?.workspaceId === 'string' ? owning.workspaceId : undefined
+          } catch (_unreadableWorkspaces) {
+            return undefined
+          }
+        }
+
+        /**
+         * Next title for a side session: 「侧边会话」, then 「侧边会话（2）」 and so on.
+         * The counter is per browser, monotonic, and never reused after a deletion, so
+         * two open panels can never share a title.
+         * @returns {string} the title to write.
+         */
+        function nextSideTitle() {
+          let used = 0
+          try {
+            const parsed = Number.parseInt(window.localStorage.getItem(TITLE_COUNTER_KEY) ?? '0', 10)
+            used = Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0
+          } catch (_unavailableStorage) {
+            used = 0
+          }
+          const next = used + 1
+          try {
+            window.localStorage.setItem(TITLE_COUNTER_KEY, String(next))
+          } catch (_unavailableStorage) {
+            // A lost counter at worst repeats a number; the panel still works.
+          }
+          const base = t('session.title')
+          return next === 1 ? base : `${base}（${next}）`
+        }
+
+        /**
          * Fork this thread at event zero and mark the child for the Host.
          *
          * Event zero of a Session is a configuration event (`permission/preset` or
@@ -463,11 +516,16 @@ window.__ModuleLoader__.load({
         async function createSide(parentSessionId) {
           if (typeof parentSessionId !== 'string' || parentSessionId === '') return undefined
           const row = ctx.sessions.list.getSnapshot().byId?.[parentSessionId]
+          const workspaceId = workspaceIdOf(parentSessionId)
           let childId
           try {
             childId = await ctx.sessions.create({
               sessionId: sideSessionId(parentSessionId),
-              ...(typeof row?.cwd === 'string' ? { cwd: row.cwd } : {}),
+              // A workspace names the cwd, and `create` refuses both, so the workspace
+              // wins whenever the parent has one.
+              ...(workspaceId === undefined
+                ? (typeof row?.cwd === 'string' ? { cwd: row.cwd } : {})
+                : { workspaceId }),
               ...(typeof row?.agentPreset === 'string' ? { agentPreset: row.agentPreset } : {}),
             })
           } catch (error) {
@@ -479,6 +537,7 @@ window.__ModuleLoader__.load({
             return undefined
           }
           remember(childId)
+          await renameSideSession(childId, nextSideTitle())
           return childId
         }
 

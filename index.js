@@ -373,24 +373,7 @@ export function apply(ctx, config) {
     } catch (error) {
       ctx.logger?.warn?.(`dsh-side: could not copy the permission preset into "${sessionId}": ${String(error)}`)
     }
-    // Keep the temporary conversation out of the session list without archiving it: an
-    // archived Session is refused a model step by the controller's gate. Detaching
-    // removes it from the workspace account while the session keeps running for its tab.
-    // Runs last and is not awaited, so a slow workspace write cannot delay inheritance.
-    void (async () => {
-      try {
-        const workspaces = ctx.workspaceRegistry?.list?.() ?? []
-        for (const workspace of workspaces) {
-          if (Array.isArray(workspace.sessionIds) && workspace.sessionIds.includes(sessionId)) {
-            await workspace.detachSession(sessionId)
-            ctx.logger?.info?.(`dsh-side: detached side conversation "${sessionId}" from its workspace`)
-            break
-          }
-        }
-      } catch (error) {
-        ctx.logger?.warn?.(`dsh-side: could not detach "${sessionId}" from its workspace: ${String(error)}`)
-      }
-    })()
+
   }
 
   ctx.effect(() => ctx.on('agent/created', (...args) => {
