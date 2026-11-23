@@ -9,6 +9,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3]
+
+### Fixed
+
+- The transcript no longer depends on the tab body forwarding `sessionId` through the
+  slot: the factory renders its view position with no props, so the id now comes from
+  the session snapshot itself. When the id or the target is unavailable the panel falls
+  back to the product's own transcript instead of staying blank.
+- The transcript shows 「正在加载对话…」 while its target has no snapshot yet, and logs
+  one line per panel (`[dsh-side] transcript { sessionId, nodes, inherited }`).
+
 ## [1.4.2]
 
 ### Fixed

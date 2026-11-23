@@ -72,6 +72,7 @@ window.__ModuleLoader__.load({
         'guide.description': 'Open a temporary session beside this one',
         'guide.noSession': 'No conversation is open in this panel.',
         'panel.creating': 'Starting the side session…',
+        'panel.loading': 'Loading the transcript…',
         'panel.failed': 'Could not start the side session.',
         'fallback.note': 'This panel could not load the conversation inline.',
         'fallback.open': 'Open in the main view',
@@ -84,6 +85,7 @@ window.__ModuleLoader__.load({
         'guide.description': '在当前会话旁边，开一条临时会话',
         'guide.noSession': '这个面板当前没有打开的会话。',
         'panel.creating': '正在创建侧边会话…',
+        'panel.loading': '正在加载对话…',
         'panel.failed': '创建侧边会话失败。',
         'fallback.note': '这个面板无法内嵌加载会话。',
         'fallback.open': '在主视图打开',
@@ -312,6 +314,9 @@ window.__ModuleLoader__.load({
 
         /** Conversation service, captured once the client can see it. */
         let conversation = undefined
+
+        /** Whether the side transcript target registered; otherwise the shell keeps its own view. */
+        let transcriptReady = false
 
         /** @param {unknown} content - message content blocks. @returns {string} text. */
         function blockText(content, type) {
@@ -782,10 +787,14 @@ window.__ModuleLoader__.load({
         /** Register the target once the Conversation service exists. */
         function registerConversationTarget(scope) {
           conversation = scope.uiConversation
-          scope.effect(() => guardSlot('side conversation target', () => scope.uiConversation.views.register({
-            target: SIDE_TARGET,
-            create: () => createSideBuilder(),
-          })), 'dsh-side: side conversation target')
+          scope.effect(() => guardSlot('side conversation target', () => {
+            const dispose = scope.uiConversation.views.register({
+              target: SIDE_TARGET,
+              create: () => createSideBuilder(),
+            })
+            transcriptReady = true
+            return dispose
+          }), 'dsh-side: side conversation target')
           for (const definition of sideDefinitions()) {
             scope.effect(() => guardSlot(`side ${definition.kind} node`, () => scope.uiConversation.events.register(definition)),
               `dsh-side: ${definition.kind} node`)
@@ -794,6 +803,13 @@ window.__ModuleLoader__.load({
 
         /** The side panel transcript: only what this session recorded after the fork cut. */
         function SideTranscript(props) {
+          if (conversation === undefined) {
+            try {
+              conversation = ctx.get?.('uiConversation')
+            } catch (_noService) {
+              conversation = undefined
+            }
+          }
           const sessionId = typeof props.sessionId === 'string' ? props.sessionId : undefined
           const source = React.useMemo(() => {
             if (conversation === undefined || sessionId === undefined) return undefined
@@ -805,8 +821,24 @@ window.__ModuleLoader__.load({
             }
           }, [sessionId])
           const snapshot = useObservable(source)
-          const nodes = Array.isArray(snapshot?.nodes) ? snapshot.nodes : []
-          const inherited = typeof snapshot?.inherited === 'number' ? snapshot.inherited : 0
+          if (snapshot === undefined) {
+            return h('div', {
+              style: {
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: '100%', minHeight: '80px', opacity: 0.5,
+                fontSize: 'var(--dsh-content-font-size-secondary, 13px)',
+              },
+            }, t('panel.loading'))
+          }
+          const nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes : []
+          const inherited = typeof snapshot.inherited === 'number' ? snapshot.inherited : 0
+          const reported = React.useRef(false)
+          React.useEffect(() => {
+            if (reported.current) return
+            reported.current = true
+            // One line per panel: enough to tell an empty target from an empty session.
+            console.info('[dsh-side] transcript', { sessionId, nodes: nodes.length, inherited })
+          }, [sessionId, nodes.length, inherited])
           const body = React.useRef(null)
           const pinned = React.useRef(true)
           const streamLength = nodes.reduce((total, node) => total + String(node.data?.text ?? '').length, 0)
@@ -907,18 +939,27 @@ window.__ModuleLoader__.load({
 
         /** Official shell and composer; only the transcript position is ours. */
         function OfficialChatInner(props) {
-          const { useSession, renderFactorySlot, sessionId } = props
+          const { useSession, renderFactorySlot } = props
           const session = useSession(value => value)
           const loading = session?.openState === 'loading'
           const blank = session?.blank !== false && session?.awaitingFirstTurn !== false
           const phase = loading && blank ? 'settling' : 'active'
+          // The factory renders its view position with no props, so the id must come from
+          // the session itself; the tab-body prop is only a hint and slot props may drop it.
+          const sessionId = typeof props.sessionId === 'string' ? props.sessionId : session?.sessionId
+          const shell = { variant: 'embedded', phase, hero: false }
           const views = React.useMemo(() => {
             const Views = viewProps => h(SideTranscript, { ...viewProps, sessionId })
             return Views
           }, [sessionId])
-          return renderFactorySlot('conversation.content', { variant: 'embedded', phase, hero: false }, {
-            slots: { views },
-          })
+          if (!transcriptReady || typeof sessionId !== 'string') {
+            // Keep the panel usable: the product's own transcript (with the inherited
+            // history visible) is better than a blank panel.
+            console.warn('[dsh-side] side transcript unavailable; falling back to the product view',
+              { transcriptReady, hasSessionId: typeof sessionId === 'string' })
+            return renderFactorySlot('conversation.content', shell)
+          }
+          return renderFactorySlot('conversation.content', shell, { slots: { views } })
         }
 
         /** The Sidebar tab body: bind the resource's Session and render the product UI. */
