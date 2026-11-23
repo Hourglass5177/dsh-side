@@ -318,6 +318,9 @@ window.__ModuleLoader__.load({
         /** Whether the side transcript target registered; otherwise the shell keeps its own view. */
         let transcriptReady = false
 
+        /** Live self-report rendered in the panel; removed once the transcript is proven. */
+        const diagnostics = { mounted: false, snapshot: 'none', nodes: -1, inherited: -1, error: '' }
+
         /** @param {unknown} content - message content blocks. @returns {string} text. */
         function blockText(content, type) {
           if (!Array.isArray(content)) return ''
@@ -816,6 +819,7 @@ window.__ModuleLoader__.load({
           }
 
           componentDidCatch(error) {
+            diagnostics.error = String(error?.message ?? error).slice(0, 120)
             console.error('[dsh-side] transcript render failed:', error)
           }
 
@@ -853,6 +857,9 @@ window.__ModuleLoader__.load({
           const snapshot = useObservable(source)
           const nodes = Array.isArray(snapshot?.nodes) ? snapshot.nodes : []
           const loading = snapshot === undefined
+          diagnostics.mounted = true
+          diagnostics.snapshot = source === undefined ? 'no-source' : (loading ? 'empty' : 'ready')
+          diagnostics.nodes = nodes.length
           const inherited = typeof snapshot.inherited === 'number' ? snapshot.inherited : 0
           const reported = React.useRef(false)
           React.useEffect(() => {
@@ -897,6 +904,7 @@ window.__ModuleLoader__.load({
             }, t('panel.loading'))
           }
 
+          diagnostics.inherited = inherited
           return h(TranscriptBoundary, null, h('div', {
             ref: body,
             style: {
@@ -1064,7 +1072,16 @@ window.__ModuleLoader__.load({
           return h('div', {
             'data-side-chat': '',
             style: { display: 'flex', width: '100%', height: '100%', minWidth: 0, minHeight: 0 },
-          }, h(SessionProvider, { session: reference }, renderSlot(TRANSCRIPT_SEAT, { sessionId })))
+          },
+          h('div', {
+            key: 'diag',
+            style: {
+              padding: '2px 8px', fontSize: '10px', lineHeight: '14px', opacity: 0.7,
+              fontFamily: 'ui-monospace, Consolas, monospace', whiteSpace: 'pre-wrap',
+              borderBottom: '1px dashed rgba(127,127,127,0.35)',
+            },
+          }, `dsh-side diag  seat=${String(sessionId ?? nonce).slice(0, 18)}  ready=${transcriptReady}  mounted=${diagnostics.mounted}  snap=${diagnostics.snapshot}  nodes=${diagnostics.nodes}  inherited=${diagnostics.inherited}  err=${diagnostics.error}`),
+          h(SessionProvider, { key: 'body', session: reference }, renderSlot(TRANSCRIPT_SEAT, { sessionId })))
         }
 
         /**

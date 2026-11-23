@@ -9,6 +9,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.5]
+
+### Added
+
+- A temporary diagnostic strip above the panel body reports the transcript state
+  (`seat`, `ready`, `mounted`, `snap`, `nodes`, `inherited`, `err`) so a blank panel can
+  be attributed without developer tools.
+
+## [1.4.4]
+
+### Added
+
+- A temporary diagnostic strip above the panel body reports the transcript state
+  (`seat`, `ready`, `mounted`, `snap`, `nodes`, `inherited`, `err`) so a blank panel can
+  be attributed without developer tools. It goes away once the transcript is proven.
+
 ## [1.4.4]
 
 ### Fixed
