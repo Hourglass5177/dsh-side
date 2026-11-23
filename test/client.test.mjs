@@ -23,7 +23,12 @@ globalThis.window = {
       results.push({ name: 'loader id is the package name', ok: id === 'dsh-side', detail: id })
       moduleExports = factory(name => {
         if (name !== 'react') throw new Error(`unexpected require ${name}`)
+        class Component {
+          constructor(props) { this.props = props; this.state = {} }
+          setState(next) { this.state = { ...this.state, ...(typeof next === 'function' ? next(this.state) : next) } }
+        }
         return {
+          Component,
           createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
           Fragment: 'fragment',
           useState: value => [value, () => {}],

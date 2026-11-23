@@ -9,6 +9,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.4]
+
+### Fixed
+
+- The transcript no longer changes its hook order: the loading state moved below every
+  hook. React threw on the first snapshot transition, the factory boundary swallowed the
+  error, and the panel stayed empty.
+- The transcript is wrapped in its own error boundary, so a future render failure shows
+  「转录区渲染失败：…」 inside the panel instead of an empty one.
+
 ## [1.4.3]
 
 ### Fixed

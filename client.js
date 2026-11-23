@@ -801,6 +801,36 @@ window.__ModuleLoader__.load({
           }
         }
 
+        /**
+         * Keep a rendering failure visible: the factory's own boundary would otherwise
+         * swallow it and leave an empty panel.
+         */
+        class TranscriptBoundary extends React.Component {
+          constructor(props) {
+            super(props)
+            this.state = { error: undefined }
+          }
+
+          static getDerivedStateFromError(error) {
+            return { error }
+          }
+
+          componentDidCatch(error) {
+            console.error('[dsh-side] transcript render failed:', error)
+          }
+
+          render() {
+            if (this.state.error === undefined) return this.props.children
+            return h('div', {
+              style: {
+                padding: '12px 16px', opacity: 0.8,
+                fontSize: 'var(--dsh-content-font-size-secondary, 13px)',
+                color: 'var(--dsw-alias-warning, #e0a030)',
+              },
+            }, `转录区渲染失败：${String(this.state.error?.message ?? this.state.error)}`)
+          }
+        }
+
         /** The side panel transcript: only what this session recorded after the fork cut. */
         function SideTranscript(props) {
           if (conversation === undefined) {
@@ -821,16 +851,8 @@ window.__ModuleLoader__.load({
             }
           }, [sessionId])
           const snapshot = useObservable(source)
-          if (snapshot === undefined) {
-            return h('div', {
-              style: {
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                width: '100%', minHeight: '80px', opacity: 0.5,
-                fontSize: 'var(--dsh-content-font-size-secondary, 13px)',
-              },
-            }, t('panel.loading'))
-          }
-          const nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes : []
+          const nodes = Array.isArray(snapshot?.nodes) ? snapshot.nodes : []
+          const loading = snapshot === undefined
           const inherited = typeof snapshot.inherited === 'number' ? snapshot.inherited : 0
           const reported = React.useRef(false)
           React.useEffect(() => {
@@ -865,7 +887,17 @@ window.__ModuleLoader__.load({
             if (pinned.current) scroller.scrollTop = scroller.scrollHeight
           }, [nodes.length, streamLength])
 
-          return h('div', {
+          if (loading) {
+            return h('div', {
+              style: {
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: '100%', minHeight: '80px', opacity: 0.5,
+                fontSize: 'var(--dsh-content-font-size-secondary, 13px)',
+              },
+            }, t('panel.loading'))
+          }
+
+          return h(TranscriptBoundary, null, h('div', {
             ref: body,
             style: {
               display: 'flex', flexDirection: 'column',
@@ -924,7 +956,7 @@ window.__ModuleLoader__.load({
             }
             return null
           }),
-          )
+          ))
         }
 
         /** The product's own conversation shell, with our transcript in its view position. */
@@ -940,6 +972,13 @@ window.__ModuleLoader__.load({
         /** Official shell and composer; only the transcript position is ours. */
         function OfficialChatInner(props) {
           const { useSession, renderFactorySlot } = props
+          if (conversation === undefined) {
+            try {
+              conversation = ctx.get?.('uiConversation')
+            } catch (_noService) {
+              conversation = undefined
+            }
+          }
           const session = useSession(value => value)
           const loading = session?.openState === 'loading'
           const blank = session?.blank !== false && session?.awaitingFirstTurn !== false
