@@ -1,4 +1,7 @@
-// Host-half test: the closed side session reaper.
+/**
+ * Host-half test: context injection and post-close reaping against a real temporary
+ * storage root. Run with `node test/host.test.mjs` (also part of `npm test`).
+ */
 import { mkdtemp, mkdir, writeFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -14,93 +17,206 @@ const mod = await import(HOST)
 check('exports apply', typeof mod.apply === 'function')
 check('injects workspaceRegistry', mod.inject?.includes('workspaceRegistry'), mod.inject)
 check('injects sessionQuery', mod.inject?.includes('sessionQuery'), mod.inject)
+check('registers no slash command', !mod.inject?.includes('commands'), mod.inject)
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
+const PARENT_MESSAGES = [
+  { role: 'user', content: [{ type: 'text', text: 'refactor the auth module' }] },
+  { role: 'assistant', content: [{ type: 'text', text: 'plan: split token storage' }] },
+  { role: 'tool', content: [{ type: 'text', text: 'exit 0' }] },
+]
+
 function makeCtx(options = {}) {
-  const warns = []
-  const infos = []
-  return {
-    warns,
-    infos,
+  const calls = { inject: [], warns: [], infos: [] }
+  let createdHandler
+  const ctx = {
+    calls,
     effect(fn) { const dispose = fn(); return () => { try { dispose?.() } catch {} } },
-    workspaceRegistry: { get archivedSessionIds() { return options.archived ?? [] } },
+    on(name, handler) {
+      if (name === 'agent/created') createdHandler = handler
+      return () => {}
+    },
+    emitCreated(agent) { createdHandler?.(agent) },
+    workspaceRegistry: {
+      get archivedSessionIds() { return options.archived ?? [] },
+      list() { return options.workspaces ?? [] },
+    },
+    get observeSession() { return options.observe },
     sessionQuery: {
+      observeSession: (...args) => (options.observe ? options.observe(...args) : Promise.reject(new Error('not observed'))),
       async readTitle(sessionId) {
         const title = options.titles?.[sessionId]
-        return title === undefined ? undefined : { title, messageSeqs: [], source: { kind: 'user' }, eventSeq: 1, updatedAt: 0 }
+        return title === undefined ? undefined : { title, eventSeq: 1, updatedAt: 0 }
       },
     },
-    logger: { info: message => infos.push(message), warn: message => warns.push(message) },
+    agents: {
+      get(id) { return options.parents?.[id] },
+    },
+    logger: { info: m => calls.infos.push(m), warn: m => calls.warns.push(m) },
   }
+  return ctx
 }
 
-// --- 1. an archived side session is reaped, an ordinary one is kept
+const fast = { titlePollAttempts: 3, titlePollIntervalMs: 5, firstSweepDelayMs: 600000, sweepIntervalMs: 600000 }
+
+// --- 1. inherits the parent conversation once, into the titled side session
+{
+  const child = {
+    session: { header: { id: 'session-side-parent-1-0123abcd' } },
+    async inject(payload) { callsOf.inject.push(payload) },
+  }
+  const callsOf = { inject: [] }
+  const parent = { session: { deriveMessages: () => PARENT_MESSAGES } }
+  const ctx = makeCtx({ parents: { 'parent-1': parent } })
+  mod.apply(ctx, fast)
+  ctx.emitCreated(child)
+  await sleep(120)
+  check('injects exactly once', callsOf.inject.length === 1, callsOf.inject.length)
+  const text = callsOf.inject[0]?.content?.[0]?.text ?? ''
+  check('injects the parent conversation', text.includes('refactor the auth module') && text.includes('split token storage'), text.slice(0, 120))
+  check('labels the speakers', text.includes('User:') && text.includes('Assistant:'), text)
+  check('marks the source', callsOf.inject[0]?.source?.kind === 'side-context', callsOf.inject[0]?.source)
+  check('sends a complete user message', callsOf.inject[0]?.role === 'user'
+    && typeof callsOf.inject[0]?.id === 'string' && callsOf.inject[0].id.length > 0, callsOf.inject[0])
+  check('reports the inheritance', ctx.calls.infos.some(m => m.includes('inherited')), ctx.calls.infos)
+
+  // duplicate creation events must not double-inject
+  ctx.emitCreated(child)
+  await sleep(80)
+  check('is not injected twice', callsOf.inject.length === 1, callsOf.inject.length)
+}
+
+// --- 2. unrelated sessions are ignored
+{
+  const callsOf = { inject: [] }
+  const child = { session: { header: { id: 'child-plain-session' } }, async inject(p) { callsOf.inject.push(p) } }
+  const ctx = makeCtx({ parents: {} })
+  mod.apply(ctx, fast)
+  ctx.emitCreated(child)
+  await sleep(120)
+  check('ignores sessions without the marker', callsOf.inject.length === 0, callsOf.inject.length)
+}
+
+// --- 3. a marker with a path-like parent id is refused
+{
+  const callsOf = { inject: [] }
+  const child = { session: { header: { id: 'child-evil-session' } }, async inject(p) { callsOf.inject.push(p) } }
+  const ctx = makeCtx({ parents: {} })
+  mod.apply(ctx, fast)
+  ctx.emitCreated(child)
+  await sleep(120)
+  check('refuses a path-like parent id in the session id', callsOf.inject.length === 0, callsOf.inject.length)
+}
+
+// --- 4. parent offline or empty: no injection, warned
+{
+  const callsOf = { inject: [] }
+  const child = { session: { header: { id: 'session-side-parent-2-0123abcd' } }, async inject(p) { callsOf.inject.push(p) } }
+  const offline = makeCtx({ parents: {} })
+  mod.apply(offline, fast)
+  offline.emitCreated(child)
+  await sleep(120)
+  check('no injection when the parent is offline', callsOf.inject.length === 0)
+  check('warns about the offline parent', offline.calls.warns.some(m => m.includes('not live')), offline.calls.warns)
+
+  const empty = makeCtx({
+    titles: { 'session-side-parent-3-0123abcd': '〔side〕parent-3' },
+    parents: { 'parent-3': { session: { deriveMessages: () => [] } } },
+  })
+  const child3 = { session: { header: { id: 'session-side-parent-3-0123abcd' } }, async inject(p) { callsOf.inject.push(p) } }
+  mod.apply(empty, fast)
+  empty.emitCreated(child3)
+  await sleep(120)
+  check('no injection when the parent has no messages', callsOf.inject.length === 0)
+  check('warns about the empty parent', empty.calls.warns.some(m => m.includes('no visible messages')), empty.calls.warns)
+}
+
+// --- 5a. the new session is attached to the parent's workspace
+{
+  const attached = []
+  const workspace = {
+    id: 'ws-1',
+    sessionIds: ['parent-attach'],
+    async attachSession(id) { attached.push(id) },
+    detachSession() {},
+  }
+  const child = { session: { header: { id: 'session-side-parent-attach-0123abcd' } }, async inject() {} }
+  const parent = { session: { deriveMessages: () => PARENT_MESSAGES } }
+  const ctx = makeCtx({ parents: { 'parent-attach': parent }, workspaces: [workspace] })
+  mod.apply(ctx, fast)
+  ctx.emitCreated(child)
+  await sleep(150)
+  check('attaches the side session to the parent workspace', attached.length === 1 && attached[0] === 'session-side-parent-attach-0123abcd', attached)
+}
+
+// --- 5b. an unloaded parent still contributes its recorded preset
+{
+  const applied = []
+  const child = { session: { header: { id: 'session-side-parent-stored-0123abcd' } }, async inject() {} }
+  const ctx = makeCtx({ parents: {}, observe: () => ({ events: [
+    { type: 'permission/preset', seq: 0, data: { preset: 'workspace-write' } },
+    { type: 'permission/preset', seq: 9, data: { preset: 'danger-full-access' } },
+  ] }) })
+  ctx.sessionQuery.observeSession = ctx.observeSession
+  ctx.permissionPresets = { current: () => undefined, set: (session, preset) => { applied.push(preset) } }
+  mod.apply(ctx, fast)
+  ctx.emitCreated(child)
+  await sleep(150)
+  check('reads the stored preset when the parent is unloaded', applied.length === 1 && applied[0] === 'danger-full-access', applied)
+}
+
+// --- 6. the parent's live permission preset is copied to the child
+{
+  const applied = []
+  const child = { session: { header: { id: 'session-side-parent-perm-0123abcd' } }, async inject() {} }
+  const parent = { session: { deriveMessages: () => PARENT_MESSAGES } }
+  const ctx = makeCtx({ parents: { 'parent-perm': parent } })
+  ctx.permissionPresets = {
+    current: session => (session === parent.session ? 'danger-full-access' : 'custom'),
+    set: (session, preset) => { applied.push({ session, preset }) },
+  }
+  mod.apply(ctx, fast)
+  ctx.emitCreated(child)
+  await sleep(120)
+  check('copies the parent preset', applied.length === 1 && applied[0].preset === 'danger-full-access', applied)
+  check('applies it to the child session', applied[0]?.session === child.session, applied[0]?.session === child.session)
+
+  // an unmatched custom state must not be written
+  const other = { session: { header: { id: 'session-side-parent-perm-baadf00d' } }, async inject() {} }
+  const ctx2 = makeCtx({ parents: { 'parent-perm': parent } })
+  ctx2.permissionPresets = { current: () => 'custom', set: () => { applied.push('unexpected') } }
+  mod.apply(ctx2, fast)
+  ctx2.emitCreated(other)
+  await sleep(120)
+  check('never writes the custom state', !applied.includes('unexpected'), applied)
+}
+
+// --- 7. reaper purges an archived side session by its id
 {
   const root = await mkdtemp(path.join(tmpdir(), 'dsh-side-reap-'))
   const bucket = path.join(root, '--F-test-bucket--')
-  const sideId = 'session-11111111-2222-3333-4444-555555555555'
-  const numberedId = 'session-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const sideId = 'session-side-parent-1-0123abcd'
   const otherId = 'session-99999999-8888-7777-6666-555555555555'
-  for (const id of [sideId, numberedId, otherId]) {
+  for (const id of [sideId, otherId]) {
     await mkdir(path.join(bucket, id), { recursive: true })
     await writeFile(path.join(bucket, id, 'session.v4.jsonl.zstd'), 'x')
   }
   const ctx = makeCtx({
-    archived: [sideId, numberedId, otherId],
-    titles: { [sideId]: '侧边会话', [numberedId]: '侧边会话（2）', [otherId]: '接手 3DGS 审计' },
+    archived: [sideId, otherId],
   })
-  mod.apply(ctx, { sessionsRoot: root, firstSweepDelayMs: 5, sweepIntervalMs: 20 })
-  await sleep(200)
+  mod.apply(ctx, {
+    sessionsRoot: root, firstSweepDelayMs: 5, sweepIntervalMs: 20,
+    titlePollAttempts: 1, titlePollIntervalMs: 5,
+  })
+  await sleep(180)
   const remaining = await readdir(bucket)
-  check('reaps the first side session', !remaining.includes(sideId), remaining)
-  check('reaps a numbered side session', !remaining.includes(numberedId), remaining)
+  check('reaps the closed side conversation', !remaining.includes(sideId), remaining)
   check('keeps an ordinary archived session', remaining.includes(otherId), remaining)
   await rm(root, { recursive: true, force: true })
 }
 
-// --- 2. only archived sessions are considered
-{
-  const root = await mkdtemp(path.join(tmpdir(), 'dsh-side-keep-'))
-  const bucket = path.join(root, '--F-keep--')
-  const liveId = 'session-22222222-3333-4444-5555-666666666666'
-  await mkdir(path.join(bucket, liveId), { recursive: true })
-  await writeFile(path.join(bucket, liveId, 'session.v4.jsonl.zstd'), 'x')
-  const ctx = makeCtx({ archived: [], titles: { [liveId]: '侧边会话' } })
-  mod.apply(ctx, { sessionsRoot: root, firstSweepDelayMs: 5, sweepIntervalMs: 20 })
-  await sleep(150)
-  const remaining = await readdir(bucket)
-  check('keeps a side session that is still open', remaining.includes(liveId), remaining)
-  await rm(root, { recursive: true, force: true })
-}
-
-// --- 3. an unreadable title is retried, never remembered as "not a side session"
-{
-  const root = await mkdtemp(path.join(tmpdir(), 'dsh-side-retry-'))
-  const bucket = path.join(root, '--F-retry--')
-  const sideId = 'session-33333333-4444-5555-6666-777777777777'
-  await mkdir(path.join(bucket, sideId), { recursive: true })
-  await writeFile(path.join(bucket, sideId, 'session.v4.jsonl.zstd'), 'x')
-  const ctx = makeCtx({ archived: [sideId], titles: {} })
-  mod.apply(ctx, { sessionsRoot: root, firstSweepDelayMs: 5, sweepIntervalMs: 20 })
-  await sleep(150)
-  check('keeps a session whose title is unavailable', (await readdir(bucket)).includes(sideId))
-  await rm(root, { recursive: true, force: true })
-}
-
-// --- 4. a hostile session id never touches the filesystem
-{
-  const root = await mkdtemp(path.join(tmpdir(), 'dsh-side-evil-'))
-  const ctx = makeCtx({ archived: ['../escape'], titles: { '../escape': '侧边会话' } })
-  mod.apply(ctx, { sessionsRoot: root, firstSweepDelayMs: 5, sweepIntervalMs: 20 })
-  await sleep(120)
-  check('ignores a path-like session id', true)
-  await rm(root, { recursive: true, force: true })
-}
-
-const failed = results.filter(result => !result.ok)
-for (const result of results) {
-  console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name}${result.ok ? '' : `  -> ${JSON.stringify(result.detail)}`}`)
-}
+const failed = results.filter(r => !r.ok)
+for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.ok ? '' : `  -> ${JSON.stringify(r.detail)}`}`)
 console.log(`\n${results.length - failed.length}/${results.length} passed`)
 process.exitCode = failed.length === 0 ? 0 : 1

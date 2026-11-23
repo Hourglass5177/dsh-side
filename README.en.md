@@ -32,11 +32,9 @@ The session surface reuses DSH's native components: message rows, composer, `+` 
 
 ## Context inheritance
 
-`/side` creates the side session with a **real session fork**: the parent's events are copied verbatim, so roles, tool calls, reasoning and permission events are all there and the model reads exactly the same conversation — no text compression, no truncation.
+The side session id carries the parent id (`session-side-<parentSessionId>-<random>`), so the host resolves the source conversation from the id alone — no title, no query index, no polling, and no race with the first message.
 
-The panel shows only what came after the fork. The transcript is a Conversation view target registered by this plugin; it drops every event up to `session/end-seed`, so the **context is lossless and the panel stays clean**.
-
-It joins the parent conversation workspace, so the composer workspace chip and the Workspace files page keep working.
+It joins the parent conversation workspace, so the composer workspace chip and the Workspace files page keep working. The host reads the parent's model-visible messages and writes them into the child as one context record; the transcript stays empty while the model can read the full context.
 
 The record appears as a collapsed entry at the top of the panel; expanding it shows what was inherited.
 
@@ -94,11 +92,11 @@ The side session joins the workspace of the conversation it was started from, ti
 
 ## Known limits
 
-- **The transcript is drawn by this plugin**: the shell and composer are the product's own, but message rows, tool rows and reasoning blocks come from the plugin, so typography is close to — not pixel-identical with — the main panel. That is the price of lossless context plus a clean panel plus the official composer.
-- **Streaming is wired**: text and reasoning appear while the attempt runs and are replaced by the committed message.
-- **A Markdown subset**: fenced code, inline code, lists, headings, bold/italic and link labels; tables, footnotes and math are not rendered.
+- **Injection is asynchronous**: the browser creates the session and writes its title, then the host reads the title and injects (up to about 4 seconds). A message sent immediately after opening may answer without the inherited context; the injection applies to the next step.
+- **The parent conversation must be online**: inherited text comes from the parent agent's model-visible messages. If the parent is unloaded, the panel still opens without inherited context and the host logs it.
+- **The context record stays at the top of the panel**: model-visible content has to be written to the session log, and the product renders that log.
 - **Deletion is best-effort**: if the app exits between archiving and the cleanup sweep, the session is deleted after the next start.
-- Side sessions are listed as 「Side session」, then 「（2）」, 「（3）」 for the ones still open; numbers follow the sessions that exist.
+- Inherited content is plain text (speaker labels and message text), without structured tool payloads.
 
 ## Development
 

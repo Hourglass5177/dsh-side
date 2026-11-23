@@ -9,6 +9,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0]
+
+### Reverted
+
+The 1.3–1.4 line replaced the product's transcript with a custom conversation target to
+get a lossless fork and a clean panel at the same time. That integration never produced
+nodes in the running client (`ready=true`, `mounted=true`, `nodes=0`, snapshot never
+published), and it cannot be verified without a live browser session. This release
+restores the last implementation that was observed to work end to end:
+
+- blank session created with the parent id embedded in its id;
+- the Host injects the parent's model-visible messages as one context record;
+- the product's own `conversation.content` renders the panel, composer included;
+- closing archives the session and the reaper deletes its stored transcript.
+
+The lossless-fork work stays on the shelf until it can be debugged against a live page.
+
 ## [1.4.5]
 
 ### Added
